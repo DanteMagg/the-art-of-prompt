@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
-import { Providers } from "@/components/providers";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -17,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "The Art of Prompt",
   description:
-    "An interactive art installation — collaborative generative art through sequential prompts to Claude.",
+    "Collaborative generative art through sequential prompts to Claude.",
 };
 
 export default function RootLayout({
@@ -30,7 +29,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Providers>{children}</Providers>
+        {children}
         <Toaster />
       </body>
     </html>
