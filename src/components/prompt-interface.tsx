@@ -37,34 +37,33 @@ function ApiKeySetup({ onReady }: { onReady: (key: string) => void }) {
   const [key, setKey] = useState("");
 
   return (
-    <div className="flex h-screen items-center justify-center bg-background">
-      <div className="w-96 space-y-6">
-        <div className="space-y-2">
-          <ClaudeLogo className="mx-auto h-10 w-10" />
-          <h1 className="text-center font-mono text-xs tracking-widest text-muted-foreground uppercase">
+    <div className="flex h-screen items-center justify-center">
+      <div className="w-80 space-y-8">
+        <div className="space-y-1">
+          <ClaudeLogo className="h-6 w-6 text-foreground" />
+          <p className="text-[11px] tracking-wide text-muted-foreground uppercase">
             The Art of Prompt
-          </h1>
+          </p>
         </div>
         <div className="space-y-3">
-          <p className="text-center font-mono text-sm text-muted-foreground">
-            Enter your Anthropic API key to begin.
-            <br />
-            <span className="text-[11px] text-muted-foreground/60">
-              Stored in your browser session only. Gone when you close this tab.
-            </span>
-          </p>
+          <div>
+            <p className="text-sm text-foreground">Enter your API key</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Stored in this tab only. Gone when you close it.
+            </p>
+          </div>
           <Input
             type="password"
             value={key}
             onChange={(e) => setKey(e.target.value)}
             placeholder="sk-ant-..."
-            className="font-mono text-sm"
+            className="text-sm"
             onKeyDown={(e) => e.key === "Enter" && key.trim() && onReady(key.trim())}
           />
           <Button
             onClick={() => key.trim() && onReady(key.trim())}
             disabled={!key.trim()}
-            className="w-full rounded-sm bg-accent text-accent-foreground hover:bg-accent/90"
+            className="w-full"
           >
             Continue
           </Button>
@@ -78,23 +77,21 @@ function SessionSetup({ onStart }: { onStart: (title: string) => void }) {
   const [title, setTitle] = useState("");
 
   return (
-    <div className="flex h-screen items-center justify-center bg-background">
-      <div className="w-96 space-y-6">
-        <div className="space-y-2">
-          <ClaudeLogo className="mx-auto h-10 w-10" />
-          <h1 className="text-center font-mono text-xs tracking-widest text-muted-foreground uppercase">
+    <div className="flex h-screen items-center justify-center">
+      <div className="w-80 space-y-8">
+        <div className="space-y-1">
+          <ClaudeLogo className="h-6 w-6 text-foreground" />
+          <p className="text-[11px] tracking-wide text-muted-foreground uppercase">
             The Art of Prompt
-          </h1>
+          </p>
         </div>
         <div className="space-y-3">
-          <p className="text-center font-mono text-sm text-muted-foreground">
-            Name this session to begin.
-          </p>
+          <p className="text-sm text-foreground">Name this session</p>
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Session title..."
-            className="font-mono text-sm"
+            placeholder="Session title"
+            className="text-sm"
             onKeyDown={(e) =>
               e.key === "Enter" && title.trim() && onStart(title.trim())
             }
@@ -102,9 +99,9 @@ function SessionSetup({ onStart }: { onStart: (title: string) => void }) {
           <Button
             onClick={() => title.trim() && onStart(title.trim())}
             disabled={!title.trim()}
-            className="w-full rounded-sm bg-accent text-accent-foreground hover:bg-accent/90"
+            className="w-full"
           >
-            Start Session
+            Start
           </Button>
         </div>
       </div>
@@ -129,8 +126,8 @@ function ArtifactViewer({ html }: { html: string }) {
 
   if (!html) {
     return (
-      <div className="flex h-full items-center justify-center bg-[#0a0a0a]">
-        <p className="font-mono text-sm text-muted-foreground">
+      <div className="flex h-full items-center justify-center bg-neutral-950">
+        <p className="text-sm text-neutral-600">
           Submit a prompt to begin
         </p>
       </div>
@@ -216,44 +213,37 @@ function ActiveSession({
 
   if (showGallery) {
     return (
-      <div className="flex h-screen flex-col bg-background">
-        <div className="flex items-center justify-between border-b border-border px-6 py-3">
-          <h2 className="font-mono text-sm text-muted-foreground">
+      <div className="flex h-screen flex-col">
+        <div className="flex items-center justify-between border-b px-6 py-4">
+          <p className="text-sm text-muted-foreground">
             {session.title} — {session.frames.length} frames
-          </h2>
-          <Button
-            variant="outline"
-            size="sm"
+          </p>
+          <button
             onClick={() => setShowGallery(false)}
-            className="font-mono text-xs"
+            className="text-xs text-muted-foreground hover:text-foreground"
           >
             Back
-          </Button>
+          </button>
         </div>
         <div className="flex-1 overflow-auto p-6">
           {session.frames.length === 0 ? (
-            <p className="font-mono text-sm text-muted-foreground">
-              No frames yet
-            </p>
+            <p className="text-sm text-muted-foreground">No frames yet</p>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {session.frames.map((f) => (
-                <div
-                  key={f.number}
-                  className="border border-border bg-card p-4"
-                >
-                  <div className="mb-2 flex items-baseline justify-between">
-                    <span className="font-mono text-sm font-bold text-accent">
-                      Frame {String(f.number).padStart(3, "0")}
+                <div key={f.number} className="border-b pb-3 last:border-0">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xs font-medium text-foreground">
+                      {String(f.number).padStart(3, "0")}
                     </span>
-                    <span className="font-mono text-[10px] text-muted-foreground">
+                    <span className="text-[10px] text-muted-foreground">
                       {new Date(f.createdAt).toLocaleTimeString()}
                     </span>
                   </div>
-                  <p className="mb-1 font-mono text-xs text-foreground">
-                    &quot;{f.promptText}&quot;
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {f.promptText}
                   </p>
-                  <p className="font-mono text-xs text-accent/70">
+                  <p className="mt-0.5 text-[11px] text-muted-foreground/60">
                     {f.acknowledgment}
                   </p>
                 </div>
@@ -268,32 +258,32 @@ function ActiveSession({
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       {/* Left Panel */}
-      <div className="flex w-[30%] min-w-[320px] flex-col border-r border-border bg-card p-6">
-        <div className="mb-6">
-          <ClaudeLogo className="mb-3 h-8 w-8" />
-          <h1 className="font-mono text-xs tracking-widest text-muted-foreground uppercase">
+      <div className="flex w-[30%] min-w-[300px] flex-col border-r p-6">
+        <div className="mb-8">
+          <ClaudeLogo className="mb-2 h-5 w-5 text-foreground" />
+          <p className="text-[11px] tracking-wide text-muted-foreground uppercase">
             The Art of Prompt
-          </h1>
+          </p>
         </div>
 
         <div className="mb-6">
-          <p className="text-sm text-muted-foreground">{session.title}</p>
+          <p className="text-xs text-muted-foreground">{session.title}</p>
           <p
-            className={`font-mono text-2xl font-bold text-foreground ${
+            className={`mt-1 text-3xl font-light tracking-tight text-foreground ${
               ack ? "animate-flash" : ""
             }`}
           >
-            Frame {String(lastFrame?.number ?? 0).padStart(3, "0")}
+            {String(lastFrame?.number ?? 0).padStart(3, "0")}
           </p>
         </div>
 
         {error && (
-          <div className="mb-4 border border-red-800 bg-red-950/50 p-3 font-mono text-xs text-red-400">
+          <div className="mb-4 border border-red-200 bg-red-50 p-3 text-xs text-red-700">
             <div className="flex items-start justify-between gap-2">
               <span>{error}</span>
               <button
                 onClick={() => setError(null)}
-                className="shrink-0 text-red-600 hover:text-red-400"
+                className="shrink-0 text-red-400 hover:text-red-600"
               >
                 ✕
               </button>
@@ -301,7 +291,7 @@ function ActiveSession({
             {error.toLowerCase().includes("api key") && (
               <button
                 onClick={onChangeKey}
-                className="mt-2 text-[11px] text-red-500 underline hover:text-red-300"
+                className="mt-2 text-[11px] text-red-500 underline hover:text-red-700"
               >
                 Change API key
               </button>
@@ -310,7 +300,7 @@ function ActiveSession({
         )}
 
         {ack && !error && (
-          <div className="mb-4 border border-border bg-background p-3 font-mono text-xs text-accent">
+          <div className="mb-4 text-xs text-muted-foreground">
             {ack}
           </div>
         )}
@@ -321,7 +311,7 @@ function ActiveSession({
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="Describe one change..."
             disabled={loading}
-            className="min-h-[100px] resize-none border-border bg-background font-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-accent"
+            className="min-h-[100px] resize-none text-sm placeholder:text-muted-foreground"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 handleSubmit();
@@ -331,35 +321,31 @@ function ActiveSession({
           <Button
             onClick={handleSubmit}
             disabled={loading || !prompt.trim()}
-            className="w-full rounded-sm bg-accent text-accent-foreground hover:bg-accent/90"
+            className="w-full"
           >
             {loading ? "Evolving..." : "Submit"}
           </Button>
 
-          <div className="flex gap-2 pt-2">
-            <Button
-              variant="outline"
-              size="sm"
+          <div className="flex gap-2 pt-1">
+            <button
               onClick={() => setShowGallery(true)}
-              className="flex-1 font-mono text-xs"
+              className="flex-1 text-xs text-muted-foreground hover:text-foreground"
             >
               Gallery ({session.frames.length})
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
+            </button>
+            <button
               onClick={onEnd}
-              className="font-mono text-xs text-muted-foreground"
+              className="text-xs text-muted-foreground hover:text-foreground"
             >
               New Session
-            </Button>
+            </button>
           </div>
         </div>
       </div>
 
       {/* Right Panel — Artifact */}
       <div
-        className={`flex-1 bg-[#0a0a0a] ${
+        className={`flex-1 bg-neutral-950 ${
           loading ? "border-4 animate-pulse-border" : ""
         }`}
       >
