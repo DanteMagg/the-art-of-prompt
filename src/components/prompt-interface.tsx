@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -109,34 +109,62 @@ function SessionSetup({ onStart }: { onStart: (title: string) => void }) {
   );
 }
 
-function ArtifactViewer({ html }: { html: string }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  useEffect(() => {
-    const iframe = iframeRef.current;
-    if (!iframe || !html) return;
-
-    const doc = iframe.contentDocument;
-    if (doc) {
-      doc.open();
-      doc.write(html);
-      doc.close();
-    }
-  }, [html]);
-
-  if (!html) {
-    return (
-      <div className="flex h-full items-center justify-center bg-neutral-950">
-        <p className="text-sm text-neutral-600">
-          Submit a prompt to begin
+function IdleCanvas() {
+  return (
+    <div className="flex h-full items-center justify-center bg-background">
+      <div className="flex flex-col items-center gap-6">
+        <div className="relative h-12 w-12">
+          <div className="absolute inset-0 rounded-full border border-border" />
+          <div
+            className="absolute inset-0 rounded-full border border-foreground/20"
+            style={{
+              clipPath: "inset(0 0 50% 0)",
+              animation: "spin 3s linear infinite",
+            }}
+          />
+          <div
+            className="absolute inset-2 rounded-full border border-foreground/10"
+            style={{
+              animation: "spin 5s linear infinite reverse",
+            }}
+          />
+          <div className="absolute inset-[18px] rounded-full bg-foreground/5" />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Waiting for a prompt
         </p>
       </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+    </div>
+  );
+}
+
+function ArtifactViewer({ html, loading }: { html: string; loading: boolean }) {
+  if (!html) {
+    return loading ? (
+      <div className="flex h-full items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-6">
+          <div className="relative h-12 w-12">
+            <div
+              className="absolute inset-0 rounded-full border-2 border-foreground/10"
+            />
+            <div
+              className="absolute inset-0 rounded-full border-2 border-transparent border-t-foreground/40"
+              style={{ animation: "spin 1s linear infinite" }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">Evolving...</p>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      </div>
+    ) : (
+      <IdleCanvas />
     );
   }
 
   return (
     <iframe
-      ref={iframeRef}
+      srcDoc={html}
       className="h-full w-full border-0"
       sandbox="allow-scripts"
       title="Artifact"
@@ -344,12 +372,8 @@ function ActiveSession({
       </div>
 
       {/* Right Panel — Artifact */}
-      <div
-        className={`flex-1 bg-neutral-950 ${
-          loading ? "border-4 animate-pulse-border" : ""
-        }`}
-      >
-        <ArtifactViewer html={lastFrame?.html ?? ""} />
+      <div className="flex-1">
+        <ArtifactViewer html={lastFrame?.html ?? ""} loading={loading} />
       </div>
     </div>
   );
