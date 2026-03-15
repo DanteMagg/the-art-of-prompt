@@ -83,10 +83,21 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(parsed);
   } catch (err: unknown) {
-    const message =
-      err instanceof Error ? err.message : "Failed to generate";
-    const status =
-      message.includes("401") || message.includes("auth") ? 401 : 500;
-    return NextResponse.json({ error: message }, { status });
+    const raw = err instanceof Error ? err.message : "Failed to generate";
+    const isAuthError =
+      raw.includes("401") ||
+      raw.includes("auth") ||
+      raw.includes("invalid x-api-key");
+
+    const message = isAuthError
+      ? "Invalid API key. Check your key and try again."
+      : raw.length > 200
+        ? "Claude generation failed. Try again."
+        : raw;
+
+    return NextResponse.json(
+      { error: message },
+      { status: isAuthError ? 401 : 500 }
+    );
   }
 }

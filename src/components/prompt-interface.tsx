@@ -152,11 +152,13 @@ function ActiveSession({
   session,
   onUpdate,
   onEnd,
+  onChangeKey,
 }: {
   apiKey: string;
   session: { title: string; frames: Frame[] };
   onUpdate: (frames: Frame[]) => void;
   onEnd: () => void;
+  onChangeKey: () => void;
 }) {
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
@@ -287,13 +289,23 @@ function ActiveSession({
 
         {error && (
           <div className="mb-4 border border-red-800 bg-red-950/50 p-3 font-mono text-xs text-red-400">
-            {error}
-            <button
-              onClick={() => setError(null)}
-              className="ml-2 text-red-600 hover:text-red-400"
-            >
-              ✕
-            </button>
+            <div className="flex items-start justify-between gap-2">
+              <span>{error}</span>
+              <button
+                onClick={() => setError(null)}
+                className="shrink-0 text-red-600 hover:text-red-400"
+              >
+                ✕
+              </button>
+            </div>
+            {error.toLowerCase().includes("api key") && (
+              <button
+                onClick={onChangeKey}
+                className="mt-2 text-[11px] text-red-500 underline hover:text-red-300"
+              >
+                Change API key
+              </button>
+            )}
           </div>
         )}
 
@@ -405,12 +417,18 @@ export function PromptInterface() {
     return <SessionSetup onStart={handleStartSession} />;
   }
 
+  const handleChangeKey = () => {
+    sessionStorage.removeItem(API_KEY_STORAGE);
+    setApiKey(null);
+  };
+
   return (
     <ActiveSession
       apiKey={apiKey}
       session={session}
       onUpdate={handleUpdateFrames}
       onEnd={handleEndSession}
+      onChangeKey={handleChangeKey}
     />
   );
 }
