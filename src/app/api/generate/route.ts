@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
 
 1. **SUBTLE MOTION** — The artifact should exhibit slow, autonomous animation (breathing, pulsing, gentle drift); pixel or dot-based rendering is preferred. Do not use cursor-only effects. The piece must feel alive even when untouched.
 
-2. **MINIMALIST** — The appearance must be clean, geometric, and sparse. Use pixel grid snapping, layered opacity, and forms that subtly "breathe."
+2. **MINIMALIST** — The appearance must be clean, geometric, and sparse. Use pixel grid snapping, layered opacity, and forms that subtly "breathe." Favor a light, bright aesthetic.
 
 3. **INCREMENTAL** — You must always evolve and build on the existing visual. *Never* wipe or start fresh; do not replace, only evolve.
 
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 
 6. **BROKEN TELEPHONE** — Each participant sees only the current artifact, never the full history; interpret each prompt literally and do not over-correct past changes.
 
-7. Render the artifact as a **single, self-contained HTML file** with all CSS and JS inline. No external dependencies. Canvas or SVG is preferred. Default to a dark background (#0a0a0a).
+7. Render the artifact as a **single, self-contained HTML file** with all CSS and JS inline. No external dependencies. Canvas or SVG is preferred. Default to a warm white/cream background (#FBF8EF or #FAFAFA) with darker accents (#1a1a1a, #333, muted earth tones). The overall palette should feel bright and airy, not dark, unless the user explicitly requests a dark theme.
 
 **Output as JSON with two fields:**
 - \`html\` — the full artifact HTML string
