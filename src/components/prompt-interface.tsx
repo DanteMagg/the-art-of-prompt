@@ -5,7 +5,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClaudeLogo } from "@/components/claude-logo";
-import { toast } from "sonner";
 
 interface Frame {
   number: number;
@@ -162,6 +161,7 @@ function ActiveSession({
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [ack, setAck] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showGallery, setShowGallery] = useState(false);
 
   const lastFrame = session.frames[session.frames.length - 1];
@@ -171,6 +171,7 @@ function ActiveSession({
     if (!prompt.trim() || loading) return;
     setLoading(true);
     setAck(null);
+    setError(null);
 
     try {
       const res = await fetch("/api/generate", {
@@ -205,7 +206,7 @@ function ActiveSession({
       setTimeout(() => setAck(null), 8000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
-      toast.error(msg);
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -284,7 +285,19 @@ function ActiveSession({
           </p>
         </div>
 
-        {ack && (
+        {error && (
+          <div className="mb-4 border border-red-800 bg-red-950/50 p-3 font-mono text-xs text-red-400">
+            {error}
+            <button
+              onClick={() => setError(null)}
+              className="ml-2 text-red-600 hover:text-red-400"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {ack && !error && (
           <div className="mb-4 border border-border bg-background p-3 font-mono text-xs text-accent">
             {ack}
           </div>
