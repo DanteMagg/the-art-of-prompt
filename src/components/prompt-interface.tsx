@@ -87,6 +87,12 @@ const QUICK_ACTIONS = [
   "Add depth",
 ];
 
+const INITIAL_SUGGESTIONS = [
+  "A field of fireflies",
+  "Ripples on still water",
+  "Slowly rotating geometry",
+];
+
 const MAX_HTML_CONTEXT = 50_000;
 
 // ── System Prompt ──
@@ -148,6 +154,53 @@ function buildSystemPrompt(styleId: string): string {
   return BASE_SYSTEM_PROMPT;
 }
 
+// ── JSON helpers ──
+
+/** Extracts the first complete {...} object by tracking brace depth.
+ *  Stops exactly at the closing brace, ignoring any trailing prose. */
+function extractBalancedJSON(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (esc) { esc = false; continue; }
+    if (ch === "\\" && inStr) { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (!inStr) {
+      if (ch === "{") depth++;
+      else if (ch === "}") { depth--; if (depth === 0) return text.slice(start, i + 1); }
+    }
+  }
+  return null;
+}
+
+/** Escapes bare control characters inside JSON string literals so JSON.parse succeeds. */
+function sanitizeJSONControlChars(json: string): string {
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (esc) { out += ch; esc = false; continue; }
+    if (ch === "\\" && inStr) { out += ch; esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; out += ch; continue; }
+    if (inStr) {
+      const c = ch.charCodeAt(0);
+      if (c < 0x20 || c === 0x7f) {
+        if (ch === "\n") { out += "\\n"; continue; }
+        if (ch === "\r") { out += "\\r"; continue; }
+        if (ch === "\t") { out += "\\t"; continue; }
+        continue; // drop other control chars
+      }
+    }
+    out += ch;
+  }
+  return out;
+}
+
 // ── Claude API ──
 
 interface ClaudeResult {
@@ -165,7 +218,8 @@ async function callClaude(
   styleId: string,
   promptHistory: { frame: number; prompt: string }[],
   screenshotBase64: string | null,
-  onText?: (accumulated: string) => void
+  onText?: (accumulated: string) => void,
+  signal?: AbortSignal
 ): Promise<ClaudeResult> {
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
 
@@ -233,37 +287,35 @@ async function callClaude(
     onText?.(accumulated);
   });
 
-  await stream.finalMessage();
+  if (signal) {
+    signal.addEventListener("abort", () => stream.abort(), { once: true });
+  }
 
-  const cleaned = accumulated.replace(/```(?:json)?\s*/g, "").replace(/```\s*/g, "");
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Claude did not return valid JSON");
+  const finalMsg = await stream.finalMessage();
+  const truncated = finalMsg.stop_reason === "max_tokens";
+
+  // Strip only the outermost code fence — leaves backticks inside HTML values untouched
+  const stripped = accumulated.trim()
+    .replace(/^```(?:json)?\s*\n?/, "")
+    .replace(/\n?```\s*$/, "");
+
+  // Balanced-brace extractor: stops at the first complete {...} object,
+  // ignoring any trailing prose or extra {} Claude may append after the JSON.
+  const jsonStr = extractBalancedJSON(stripped);
+  if (!jsonStr) {
+    throw new Error(
+      truncated
+        ? "The artifact was too long to finish. Try a simpler prompt or switch to a faster model."
+        : "Claude did not return valid JSON. Try again."
+    );
+  }
 
   let parsed: { html: string; acknowledgment: string; suggestions?: string[] };
   try {
-    parsed = JSON.parse(jsonMatch[0]);
+    parsed = JSON.parse(jsonStr);
   } catch {
-    // Sanitize control chars only inside JSON string literals
-    let out = "";
-    let inStr = false;
-    let esc = false;
-    for (let i = 0; i < jsonMatch[0].length; i++) {
-      const ch = jsonMatch[0][i];
-      if (esc) { out += ch; esc = false; continue; }
-      if (ch === "\\" && inStr) { out += ch; esc = true; continue; }
-      if (ch === '"') { inStr = !inStr; out += ch; continue; }
-      if (inStr) {
-        const c = ch.charCodeAt(0);
-        if (c < 0x20 || c === 0x7f) {
-          if (ch === "\n") { out += "\\n"; continue; }
-          if (ch === "\r") { out += "\\r"; continue; }
-          if (ch === "\t") { out += "\\t"; continue; }
-          continue;
-        }
-      }
-      out += ch;
-    }
-    parsed = JSON.parse(out);
+    // Fallback: escape bare control characters inside JSON string literals
+    parsed = JSON.parse(sanitizeJSONControlChars(jsonStr));
   }
   if (!parsed.html || !parsed.acknowledgment) {
     throw new Error("Missing html or acknowledgment in response");
@@ -412,22 +464,22 @@ function SessionSetup({
 
   return (
     <div className="flex h-screen items-center justify-center">
-      <div className="w-[28rem] space-y-8">
-        <div className="space-y-1">
-          <ClaudeLogo className="h-6 w-6 text-foreground" />
-          <p className="text-[11px] tracking-wide text-muted-foreground uppercase">
+      <div className="w-[32rem] space-y-10">
+        <div className="space-y-2">
+          <ClaudeLogo className="h-7 w-7 text-foreground" />
+          <p className="text-xs tracking-wide text-muted-foreground uppercase">
             The Art of Prompt
           </p>
         </div>
 
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <p className="text-sm text-foreground">Name this session</p>
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <p className="text-base text-foreground">Name this session</p>
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Session title"
-              className="text-sm"
+              className="text-base py-3"
               onKeyDown={(e) =>
                 e.key === "Enter" &&
                 title.trim() &&
@@ -436,14 +488,17 @@ function SessionSetup({
             />
           </div>
 
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Style</p>
-            <div className="flex flex-wrap gap-1">
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Style</p>
+            <div className="flex flex-wrap gap-1.5">
               {STYLE_PRESETS.map((s) => (
                 <button
                   key={s.id}
-                  onClick={() => setStyle(s.id as StyleId)}
-                  className={`rounded px-2 py-1 text-[11px] transition-colors ${
+                  onClick={() => {
+                    setStyle(s.id as StyleId);
+                    if (s.id !== "default") setTemplateId("blank");
+                  }}
+                  className={`rounded px-3 py-1.5 text-xs transition-colors ${
                     style === s.id
                       ? "bg-foreground text-background"
                       : "text-muted-foreground hover:text-foreground"
@@ -455,27 +510,32 @@ function SessionSetup({
             </div>
           </div>
 
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Start from</p>
-            <div className="grid grid-cols-3 gap-2">
-              {TEMPLATES.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTemplateId(t.id)}
-                  className={`rounded border px-3 py-2 text-left transition-colors ${
-                    templateId === t.id
-                      ? "border-foreground bg-card"
-                      : "border-border hover:border-foreground/30"
-                  }`}
-                >
-                  <span className="block text-xs font-medium text-foreground">
-                    {t.label}
-                  </span>
-                  <span className="block text-[10px] text-muted-foreground">
-                    {t.desc}
-                  </span>
-                </button>
-              ))}
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Start from</p>
+            <div className="grid grid-cols-3 gap-2.5">
+              {TEMPLATES.map((t) => {
+                const disabled = style !== "default" && t.id !== "blank";
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => !disabled && setTemplateId(t.id)}
+                    className={`rounded border px-4 py-3 text-left transition-colors ${
+                      disabled
+                        ? "opacity-40 cursor-not-allowed border-border"
+                        : templateId === t.id
+                          ? "border-foreground bg-card"
+                          : "border-border hover:border-foreground/30"
+                    }`}
+                  >
+                    <span className="block text-sm font-medium text-foreground">
+                      {t.label}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      {t.desc}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -484,13 +544,13 @@ function SessionSetup({
               title.trim() && onStart(title.trim(), style, selectedTemplate)
             }
             disabled={!title.trim()}
-            className="w-full"
+            className="w-full py-3 text-base"
           >
             Start
           </Button>
 
           <div className="flex items-center justify-center gap-4 pt-1">
-            <label className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+            <label className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
               Import session
               <input
                 type="file"
@@ -638,12 +698,8 @@ function ArtifactViewer({
     if (!html || loading) return;
 
     function handleMessage(e: MessageEvent) {
-      if (e.origin !== window.location.origin) return;
-      if (
-        e.data?.type === "artifact-health" &&
-        e.data.blank &&
-        !blankFired.current
-      ) {
+      if (e.data?.type !== "artifact-health") return;
+      if (e.data.blank && !blankFired.current) {
         blankFired.current = true;
         onBlank?.();
       }
@@ -802,7 +858,7 @@ function createOffscreenIframe(
   height = 1080,
   keepVisible = false
 ): Promise<HTMLIFrameElement> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const iframe = document.createElement("iframe");
     if (keepVisible) {
       iframe.style.cssText = `position:fixed;left:0;top:0;width:${width}px;height:${height}px;border:none;opacity:0;pointer-events:none;z-index:-1;`;
@@ -810,8 +866,12 @@ function createOffscreenIframe(
       iframe.style.cssText = `position:fixed;left:-9999px;top:0;width:${width}px;height:${height}px;border:none;`;
     }
     iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    const timeout = setTimeout(() => {
+      try { document.body.removeChild(iframe); } catch { /* ok */ }
+      reject(new Error("Iframe load timed out"));
+    }, 10_000);
     document.body.appendChild(iframe);
-    iframe.onload = () => resolve(iframe);
+    iframe.onload = () => { clearTimeout(timeout); resolve(iframe); };
     iframe.srcdoc = html;
   });
 }
@@ -1299,7 +1359,11 @@ function ActiveSession({
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [ack, setAck] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>(() => {
+    const last = session.frames[session.frames.length - 1];
+    if (last?.suggestions?.length) return last.suggestions;
+    return session.frames.length <= 1 ? INITIAL_SUGGESTIONS : [];
+  });
   const [error, setError] = useState<string | null>(null);
   const [showGallery, setShowGallery] = useState(false);
   const [model, setModel] = useState<ModelId>(getStoredModel);
@@ -1309,6 +1373,8 @@ function ActiveSession({
   const retryRef = useRef(0);
   const lastPromptRef = useRef("");
   const screenshotRef = useRef<string | null>(null);
+  const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const sessionRef = useRef(session);
   useEffect(() => { sessionRef.current = session; });
 
@@ -1363,6 +1429,10 @@ function ActiveSession({
       fNum: number,
       isRetry: boolean
     ) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       setLoading(true);
       setAck(isRetry ? "Regenerating — previous output didn't render..." : null);
       setError(null);
@@ -1391,7 +1461,8 @@ function ActiveSession({
           sessionRef.current.style,
           history,
           screenshot,
-          (text) => setStreamText(text)
+          (text) => setStreamText(text),
+          controller.signal
         );
 
         const newFrame: Frame = {
@@ -1409,8 +1480,10 @@ function ActiveSession({
         setStreamText("");
         setAck(result.acknowledgment);
         if (result.suggestions?.length) setSuggestions(result.suggestions);
-        setTimeout(() => setAck(null), 8000);
+        if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
+        ackTimerRef.current = setTimeout(() => setAck(null), 8000);
       } catch (err: unknown) {
+        if (controller.signal.aborted) return;
         setStreamText("");
         const raw = err instanceof Error ? err.message : "Something went wrong";
         const isAuthError =
@@ -1430,6 +1503,14 @@ function ActiveSession({
     },
     [apiKey, model, onUpdate]
   );
+
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setLoading(false);
+    setStreamText("");
+    setAck(null);
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     if (!prompt.trim() || loading) return;
@@ -1453,6 +1534,7 @@ function ActiveSession({
       return;
     }
     retryRef.current += 1;
+    setLoading(true);
     const s = sessionRef.current;
     const framesBeforeBad = s.frames.slice(0, -1);
     const prevFrame = framesBeforeBad[framesBeforeBad.length - 1];
@@ -1614,7 +1696,8 @@ function ActiveSession({
               disabled={loading}
               className="min-h-[100px] resize-none text-sm placeholder:text-muted-foreground"
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
                   handleSubmit();
                 }
               }}
@@ -1636,22 +1719,24 @@ function ActiveSession({
               ))}
             </div>
 
-            <Button
-              onClick={handleSubmit}
-              disabled={loading || !prompt.trim()}
-              className="w-full"
-            >
-              {loading ? (
-                "Evolving..."
-              ) : (
+            {loading ? (
+              <Button onClick={handleCancel} variant="outline" className="w-full">
+                Cancel
+              </Button>
+            ) : (
+              <Button
+                onClick={handleSubmit}
+                disabled={!prompt.trim()}
+                className="w-full"
+              >
                 <span className="flex items-center justify-center gap-2">
                   Submit
                   <kbd className="rounded bg-primary-foreground/20 px-1 py-0.5 text-[10px] font-normal">
-                    {IS_MAC ? "⌘" : "Ctrl"}↵
+                    ↵
                   </kbd>
                 </span>
-              )}
-            </Button>
+              </Button>
+            )}
 
             <div className="flex gap-2 pt-1">
               <button
