@@ -85,11 +85,30 @@ const QUICK_ACTIONS = [
   "Add depth",
 ];
 
-const INITIAL_SUGGESTIONS = [
+const INITIAL_SUGGESTIONS_POOL = [
   "A field of fireflies",
   "Ripples on still water",
   "Slowly rotating geometry",
+  "Drifting constellations",
+  "Ink drops in water",
+  "A breathing grid",
+  "Falling cherry blossoms",
+  "Orbiting particles",
+  "A quiet rainstorm",
+  "Pulsing concentric rings",
+  "Flickering candlelight",
+  "Gentle ocean waves",
 ];
+
+function pickInitialSuggestions(n = 3): string[] {
+  const pool = [...INITIAL_SUGGESTIONS_POOL];
+  const picked: string[] = [];
+  for (let i = 0; i < n && pool.length > 0; i++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    picked.push(pool.splice(idx, 1)[0]);
+  }
+  return picked;
+}
 
 const MAX_HTML_CONTEXT = 50_000;
 
@@ -423,6 +442,7 @@ function ApiKeySetup({ onReady }: { onReady: (key: string) => void }) {
             <p>Stored in sessionStorage only — erased when you close this tab.</p>
           </div>
         </div>
+        <p className="text-[11px] text-muted-foreground/50">by Dante Maggiotto</p>
       </div>
     </div>
   );
@@ -1382,7 +1402,7 @@ function ActiveSession({
   const [suggestions, setSuggestions] = useState<string[]>(() => {
     const last = session.frames[session.frames.length - 1];
     if (last?.suggestions?.length) return last.suggestions;
-    return session.frames.length <= 1 ? INITIAL_SUGGESTIONS : [];
+    return session.frames.length <= 1 ? pickInitialSuggestions() : [];
   });
   const [error, setError] = useState<string | null>(null);
   const [showGallery, setShowGallery] = useState(false);
@@ -1595,7 +1615,7 @@ function ActiveSession({
           <div className="mb-4">
             <p className="text-xs text-muted-foreground">{session.title}</p>
             <p
-              className={`mt-1 text-3xl font-light tracking-tight text-foreground ${
+              className={`mt-1 text-lg font-light tracking-tight text-foreground ${
                 ack ? "animate-flash" : ""
               }`}
             >
