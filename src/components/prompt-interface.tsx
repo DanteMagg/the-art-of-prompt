@@ -87,76 +87,81 @@ const QUICK_ACTIONS = [
 
 const INITIAL_SUGGESTIONS: Record<string, string[]> = {
   default: [
-    "A field of fireflies",
-    "Ripples on still water",
-    "Drifting constellations",
-    "Ink drops in water",
-    "Falling cherry blossoms",
-    "Orbiting particles",
-    "A quiet rainstorm",
-    "Flickering candlelight",
-    "Gentle ocean waves",
-    "Pulsing concentric rings",
+    "A murmuration of starlings",
+    "Ink drops blooming in water",
+    "A single pendulum swinging",
+    "Phyllotaxis spiral of dots",
+    "Rain falling on a still pond",
+    "A tree growing from a seed",
+    "Smoke rising from a candle",
+    "A double pendulum with trails",
+    "Drifting particles connected by threads",
+    "A Voronoi diagram slowly shifting",
+    "Mountain ridgeline at golden hour",
+    "Bouncing balls with gravity",
+    "A sunflower made of particles",
+    "Cloth rippling in the wind",
+    "Fireflies at dusk over a meadow",
   ],
   pixel: [
-    "A retro space shooter",
-    "A pixel campfire",
-    "Rain on a city rooftop",
-    "A walking pixel character",
-    "Blinking 8-bit stars",
-    "A scrolling forest at night",
-    "A glowing lava lamp in 8-bit",
-    "Pixel fireflies in a field",
-    "A coin spinning mid-air",
-    "An 8-bit sunrise",
+    "A campfire with rising sparks",
+    "A tiny planet slowly rotating",
+    "Rain falling on pixel rooftops",
+    "A cozy room with flickering light",
+    "Fish swimming in an 8-bit pond",
+    "A pixel rocket launching upward",
+    "A windmill turning in a field",
+    "Snowfall over a pixel village",
+    "An hourglass with falling sand",
+    "A lighthouse beam sweeping the dark",
   ],
   geometric: [
-    "Tessellating triangles morphing",
-    "A Mondrian grid coming alive",
-    "Sacred geometry unfolding",
-    "Rotating nested polygons",
-    "A Bauhaus color grid pulsing",
-    "Hexagons tiling endlessly",
-    "A kaleidoscope of sharp forms",
-    "Expanding concentric squares",
-    "Intersecting primary-color circles",
-    "A grid of diamonds spinning",
+    "A Penrose tiling that breathes",
+    "Nested polygons rotating in opposite directions",
+    "A Sierpinski triangle assembling",
+    "Circles packing into a square",
+    "A Mondrian grid with shifting proportions",
+    "Hexagonal cells pulsing like a heartbeat",
+    "Golden ratio spirals layered",
+    "Voronoi cells drifting apart",
+    "An impossible triangle rotating in 3D",
+    "Tessellation morphing between shapes",
   ],
   organic: [
-    "Bioluminescent jellyfish drifting",
-    "Coral growing in slow motion",
-    "Ink bleeding through water",
-    "Roots spreading underground",
-    "A breathing lung-like form",
-    "Algae swaying in a current",
-    "Cells slowly dividing",
-    "Waves of kelp in deep water",
-    "A blooming flower in time-lapse",
-    "Soft lava-lamp blobs",
+    "Coral branching outward slowly",
+    "Ink diffusing through still water",
+    "A jellyfish pulsing downward",
+    "Roots finding their way through soil",
+    "Cells dividing under a microscope",
+    "A vine climbing a wall",
+    "Waves of bioluminescent plankton",
+    "A fern unfurling its fronds",
+    "Lava lamp blobs rising and falling",
+    "Mushrooms sprouting from a log",
   ],
   brutalist: [
-    "Bold text fragmenting apart",
-    "Glitch scan lines on a face",
-    "A concrete wall cracking",
-    "Raw noise and static",
-    "Binary rain on a dark screen",
-    "Harsh shapes colliding",
-    "A strobing monochrome grid",
-    "Distorted TV signal",
-    "A black-and-white vortex",
-    "Stark shadows moving",
+    "A grid of squares eroding",
+    "Static noise resolving into a shape",
+    "Bold text shattering into fragments",
+    "Harsh lines converging to a point",
+    "A monochrome maze being carved",
+    "Concrete blocks stacking and falling",
+    "Scan lines distorting a circle",
+    "A barcode slowly bending",
+    "Cracks propagating across a surface",
+    "Binary digits cascading down",
   ],
   neon: [
-    "A neon cityscape at night",
-    "Synthwave sun rising on the horizon",
-    "Glowing grid lines on dark space",
-    "Neon rain on wet asphalt",
-    "Pulsing plasma arcs",
-    "A holographic butterfly",
-    "Laser beams cutting through fog",
-    "Neon signs flickering on",
-    "Electric sparks cascading",
-    "A cyberpunk data stream",
+    "Plasma arcs between two points",
+    "A grid floor stretching to the horizon",
+    "Glowing rings orbiting each other",
+    "A synthwave sun with reflection",
+    "Neon rain on wet pavement",
+    "Particle trails forming a spiral",
+    "Electric arcs jumping across nodes",
+    "A wireframe sphere rotating",
+    "Light beams refracting through a prism",
+    "Pulsing frequency bars like an equalizer",
   ],
 };
 
@@ -168,6 +173,46 @@ function pickInitialSuggestions(style = "default", n = 3): string[] {
     picked.push(pool.splice(idx, 1)[0]);
   }
   return picked;
+}
+
+async function fetchGeneratedSuggestions(
+  apiKey: string,
+  style: string,
+  signal?: AbortSignal
+): Promise<string[]> {
+  const preset = STYLE_PRESETS.find((s) => s.id === style);
+  const styleCtx = preset?.modifier
+    ? `The visual style is: ${preset.modifier}`
+    : "The visual style is open / default — poetic, generative, beautiful.";
+
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+  const msg = await client.messages.create(
+    {
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      system:
+        "You generate creative short prompt ideas for a generative art / animation tool. Return ONLY a raw JSON array of strings — no markdown, no explanation.",
+      messages: [
+        {
+          role: "user",
+          content: `${styleCtx}
+
+Generate 30 short, evocative animation/visual prompts that fit this style. Each should be 3–8 words, poetic, specific, and suggest something visually interesting in motion. Vary them across moods, subjects, and scales.
+
+Return as a JSON array: ["...", "...", ...]`,
+        },
+      ],
+    },
+    { signal }
+  );
+
+  const text = msg.content[0]?.type === "text" ? msg.content[0].text.trim() : "";
+  const arrStart = text.indexOf("[");
+  const arrEnd = text.lastIndexOf("]");
+  if (arrStart === -1 || arrEnd === -1) return [];
+  const arr: unknown = JSON.parse(text.slice(arrStart, arrEnd + 1));
+  if (!Array.isArray(arr)) return [];
+  return (arr as unknown[]).filter((s): s is string => typeof s === "string").slice(0, 30);
 }
 
 const MAX_HTML_CONTEXT = 50_000;
@@ -1537,6 +1582,7 @@ function ActiveSession({
   const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const sessionRef = useRef(session);
+  const suggestionPoolRef = useRef<string[]>([]);
   useEffect(() => { sessionRef.current = session; });
 
   const handleModelChange = (id: ModelId) => {
@@ -1558,6 +1604,22 @@ function ActiveSession({
       document.title = "The Art of Prompt";
     };
   }, [lastFrame?.number, session.title]);
+
+  // Generate style-aware suggestions on fresh session start
+  useEffect(() => {
+    if (session.frames.length > 1) return;
+    const ctrl = new AbortController();
+    fetchGeneratedSuggestions(apiKey, session.style, ctrl.signal)
+      .then((generated) => {
+        if (generated.length >= 3) {
+          suggestionPoolRef.current = generated;
+          setSuggestions(generated.slice(0, 3));
+        }
+      })
+      .catch(() => { /* keep hardcoded fallback */ });
+    return () => ctrl.abort();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Capture screenshot in background after each frame renders
   useEffect(() => {
@@ -1836,7 +1898,7 @@ function ActiveSession({
 
           {/* Suggestions */}
           {suggestions.length > 0 && !loading && !error && (
-            <div className="mb-4 flex flex-wrap gap-1">
+            <div className="mb-4 flex flex-wrap items-center gap-1">
               {suggestions.map((s) => (
                 <button
                   key={s}
@@ -1846,6 +1908,26 @@ function ActiveSession({
                   {s}
                 </button>
               ))}
+              {suggestionPoolRef.current.length > 3 && (
+                <button
+                  onClick={() => {
+                    const pool = suggestionPoolRef.current;
+                    const next: string[] = [];
+                    const remaining = pool.filter((s) => !suggestions.includes(s));
+                    const src = remaining.length >= 3 ? remaining : pool;
+                    const copy = [...src];
+                    for (let i = 0; i < 3 && copy.length > 0; i++) {
+                      const idx = Math.floor(Math.random() * copy.length);
+                      next.push(copy.splice(idx, 1)[0]);
+                    }
+                    setSuggestions(next);
+                  }}
+                  className="rounded px-1.5 py-1 text-[11px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                  title="Show different suggestions"
+                >
+                  ↻
+                </button>
+              )}
             </div>
           )}
 
