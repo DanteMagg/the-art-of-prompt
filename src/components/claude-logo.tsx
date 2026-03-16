@@ -5,6 +5,7 @@ export function ClaudeLogo({ className }: { className?: string }) {
       viewBox="0 0 256 256"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
     >
       <path
         d="M169.593 69.91L118.248 163.478L96.8137 122.173L169.593 69.91Z"
