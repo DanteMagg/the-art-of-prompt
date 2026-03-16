@@ -85,23 +85,83 @@ const QUICK_ACTIONS = [
   "Add depth",
 ];
 
-const INITIAL_SUGGESTIONS_POOL = [
-  "A field of fireflies",
-  "Ripples on still water",
-  "Slowly rotating geometry",
-  "Drifting constellations",
-  "Ink drops in water",
-  "A breathing grid",
-  "Falling cherry blossoms",
-  "Orbiting particles",
-  "A quiet rainstorm",
-  "Pulsing concentric rings",
-  "Flickering candlelight",
-  "Gentle ocean waves",
-];
+const INITIAL_SUGGESTIONS: Record<string, string[]> = {
+  default: [
+    "A field of fireflies",
+    "Ripples on still water",
+    "Drifting constellations",
+    "Ink drops in water",
+    "Falling cherry blossoms",
+    "Orbiting particles",
+    "A quiet rainstorm",
+    "Flickering candlelight",
+    "Gentle ocean waves",
+    "Pulsing concentric rings",
+  ],
+  pixel: [
+    "A retro space shooter",
+    "A pixel campfire",
+    "Rain on a city rooftop",
+    "A walking pixel character",
+    "Blinking 8-bit stars",
+    "A scrolling forest at night",
+    "A glowing lava lamp in 8-bit",
+    "Pixel fireflies in a field",
+    "A coin spinning mid-air",
+    "An 8-bit sunrise",
+  ],
+  geometric: [
+    "Tessellating triangles morphing",
+    "A Mondrian grid coming alive",
+    "Sacred geometry unfolding",
+    "Rotating nested polygons",
+    "A Bauhaus color grid pulsing",
+    "Hexagons tiling endlessly",
+    "A kaleidoscope of sharp forms",
+    "Expanding concentric squares",
+    "Intersecting primary-color circles",
+    "A grid of diamonds spinning",
+  ],
+  organic: [
+    "Bioluminescent jellyfish drifting",
+    "Coral growing in slow motion",
+    "Ink bleeding through water",
+    "Roots spreading underground",
+    "A breathing lung-like form",
+    "Algae swaying in a current",
+    "Cells slowly dividing",
+    "Waves of kelp in deep water",
+    "A blooming flower in time-lapse",
+    "Soft lava-lamp blobs",
+  ],
+  brutalist: [
+    "Bold text fragmenting apart",
+    "Glitch scan lines on a face",
+    "A concrete wall cracking",
+    "Raw noise and static",
+    "Binary rain on a dark screen",
+    "Harsh shapes colliding",
+    "A strobing monochrome grid",
+    "Distorted TV signal",
+    "A black-and-white vortex",
+    "Stark shadows moving",
+  ],
+  neon: [
+    "A neon cityscape at night",
+    "Synthwave sun rising on the horizon",
+    "Glowing grid lines on dark space",
+    "Neon rain on wet asphalt",
+    "Pulsing plasma arcs",
+    "A holographic butterfly",
+    "Laser beams cutting through fog",
+    "Neon signs flickering on",
+    "Electric sparks cascading",
+    "A cyberpunk data stream",
+  ],
+};
 
-function pickInitialSuggestions(n = 3): string[] {
-  const pool = [...INITIAL_SUGGESTIONS_POOL];
+function pickInitialSuggestions(style = "default", n = 3): string[] {
+  const pool = [...(INITIAL_SUGGESTIONS[style] ?? INITIAL_SUGGESTIONS.default)];
   const picked: string[] = [];
   for (let i = 0; i < n && pool.length > 0; i++) {
     const idx = Math.floor(Math.random() * pool.length);
@@ -1463,7 +1523,7 @@ function ActiveSession({
   const [suggestions, setSuggestions] = useState<string[]>(() => {
     const last = session.frames[session.frames.length - 1];
     if (last?.suggestions?.length) return last.suggestions;
-    return session.frames.length <= 1 ? pickInitialSuggestions() : [];
+    return session.frames.length <= 1 ? pickInitialSuggestions(session.style) : [];
   });
   const [error, setError] = useState<string | null>(null);
   const [showGallery, setShowGallery] = useState(false);
