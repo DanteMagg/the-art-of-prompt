@@ -27,8 +27,6 @@ interface SessionData {
 
 // ── Constants ──
 
-const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
-
 const API_KEY_STORAGE = "aop_api_key";
 const SESSION_STORAGE = "aop_session";
 const MODEL_STORAGE = "aop_model";
@@ -442,19 +440,23 @@ function SessionSetup({
   const [title, setTitle] = useState("");
   const [style, setStyle] = useState<StyleId>("default");
   const [templateId, setTemplateId] = useState("blank");
+  const [importError, setImportError] = useState<string | null>(null);
 
   const handleFileLoad = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setImportError(null);
     const reader = new FileReader();
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result as string);
-        if (data?.title && Array.isArray(data.frames)) {
+        if (data?.title && Array.isArray(data.frames) && data.frames.length > 0) {
           onLoad({ style: "default", ...data });
+        } else {
+          setImportError("Invalid session file — missing title or frames.");
         }
       } catch {
-        /* invalid file */
+        setImportError("Could not parse file — expected a .json session export.");
       }
     };
     reader.readAsText(file);
@@ -549,7 +551,7 @@ function SessionSetup({
             Start
           </Button>
 
-          <div className="flex items-center justify-center gap-4 pt-1">
+          <div className="flex flex-col items-center gap-2 pt-1">
             <label className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
               Import session
               <input
@@ -559,6 +561,9 @@ function SessionSetup({
                 className="hidden"
               />
             </label>
+            {importError && (
+              <p className="text-xs text-red-500">{importError}</p>
+            )}
           </div>
         </div>
       </div>
@@ -879,8 +884,9 @@ function createOffscreenIframe(
 async function captureArtifactScreenshot(
   html: string
 ): Promise<string | null> {
+  let iframe: HTMLIFrameElement | null = null;
   try {
-    const iframe = await createOffscreenIframe(html, 800, 800);
+    iframe = await createOffscreenIframe(html, 800, 800);
     const canvas = document.createElement("canvas");
     canvas.width = 800;
     canvas.height = 800;
@@ -896,11 +902,14 @@ async function captureArtifactScreenshot(
       await captureIframeWithHtml2Canvas(iframe, canvas);
     }
 
-    document.body.removeChild(iframe);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
     return dataUrl.split(",")[1] || null;
   } catch {
     return null;
+  } finally {
+    if (iframe) {
+      try { document.body.removeChild(iframe); } catch { /* ok */ }
+    }
   }
 }
 
@@ -1048,7 +1057,7 @@ function GalleryView({
     a.href = url;
     a.download = `${session.title.replace(/\s+/g, "-").toLowerCase()}-frames.zip`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
 
   const handleRecordTimelapse = async () => {
@@ -1065,6 +1074,13 @@ function GalleryView({
       list.length = 0;
     };
 
+    let pendingBatch: Promise<HTMLIFrameElement[]> | null = null;
+
+    // Hoisted so finally can stop the recorder/stream on abort or error
+    let stream: MediaStream | null = null;
+    let recorder: MediaRecorder | null = null;
+    let done: Promise<void> = Promise.resolve();
+
     try {
       const freshFlags = frames.map((f, i) => i === 0 || isOneShot(f.promptText));
       console.log(
@@ -1078,19 +1094,19 @@ function GalleryView({
       const canvas = document.createElement("canvas");
       canvas.width = VW;
       canvas.height = VH;
-      const stream = canvas.captureStream(0);
+      stream = canvas.captureStream(0);
       const mimeType = (
         ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
           .find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm"
       );
-      const recorder = new MediaRecorder(stream, {
+      recorder = new MediaRecorder(stream, {
         mimeType,
         videoBitsPerSecond: 10_000_000,
       });
       const chunks: BlobPart[] = [];
-      recorder.ondataavailable = (e) => chunks.push(e.data);
-      const done = new Promise<void>((resolve) => {
-        recorder.onstop = () => resolve();
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      done = new Promise<void>((resolve) => {
+        recorder!.onstop = () => resolve();
       });
       recorder.start();
       const track = stream.getVideoTracks()[0];
@@ -1098,9 +1114,7 @@ function GalleryView({
       const captureFps = 60;
 
       const initCtx = canvas.getContext("2d");
-      if (initCtx) { initCtx.clearRect(0, 0, VW, VH); }
-
-      let pendingBatch: Promise<HTMLIFrameElement[]> | null = null;
+      if (initCtx) { initCtx.fillStyle = "#FBF8EF"; initCtx.fillRect(0, 0, VW, VH); }
 
       const loadBatch = (start: number) => {
         const end = Math.min(start + BATCH, frames.length);
@@ -1175,22 +1189,28 @@ function GalleryView({
         }
       }
 
-      setExportProgress("Finalizing...");
-      recorder.stop();
-      await done;
       if (!abortRef.current.aborted) {
+        setExportProgress("Finalizing...");
+        recorder.stop();
+        await done;
         const blob = new Blob(chunks, { type: "video/webm" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
         a.download = `${session.title.replace(/\s+/g, "-").toLowerCase()}-timelapse.webm`;
         a.click();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
       }
     } catch (err) {
       console.error("Recording failed:", err);
     } finally {
+      // Stop recorder and release stream tracks regardless of abort/error
+      try {
+        if (recorder && recorder.state !== "inactive") { recorder.stop(); await done; }
+      } catch { /* ok */ }
+      stream?.getTracks().forEach((t: MediaStreamTrack) => t.stop());
       destroyIframes(liveIframes);
+      pendingBatch?.then((batch) => destroyIframes(batch)).catch(() => {});
       setExporting(false);
       setExportProgress("");
     }
@@ -1676,9 +1696,9 @@ function ActiveSession({
           {/* Suggestions */}
           {suggestions.length > 0 && !loading && !error && (
             <div className="mb-4 flex flex-wrap gap-1">
-              {suggestions.map((s, i) => (
+              {suggestions.map((s) => (
                 <button
-                  key={i}
+                  key={s}
                   onClick={() => setPrompt(s)}
                   className="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-colors"
                 >
@@ -1710,7 +1730,10 @@ function ActiveSession({
                   key={qa}
                   disabled={loading}
                   onClick={() =>
-                    setPrompt((p) => (p.trim() ? `${p.trim()}, ${qa.toLowerCase()}` : qa))
+                    setPrompt((p) => {
+                      if (p.toLowerCase().includes(qa.toLowerCase())) return p;
+                      return p.trim() ? `${p.trim()}, ${qa.toLowerCase()}` : qa;
+                    })
                   }
                   className="rounded border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-colors disabled:opacity-40"
                 >
@@ -1767,7 +1790,11 @@ function ActiveSession({
                 </button>
               )}
               <button
-                onClick={onEnd}
+                onClick={() => {
+                  if (session.frames.length === 0 || window.confirm("Start a new session? Unsaved progress will be lost.")) {
+                    onEnd();
+                  }
+                }}
                 className="text-xs text-muted-foreground hover:text-foreground"
               >
                 New Session
@@ -1849,10 +1876,14 @@ export function PromptInterface() {
     setRecoverySession(null);
   };
 
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleUpdateSession = (updated: SessionData) => {
     sessionStorage.setItem(SESSION_STORAGE, JSON.stringify(updated));
-    localStorage.setItem(AUTOSAVE_STORAGE, JSON.stringify(updated));
     setSession(updated);
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      localStorage.setItem(AUTOSAVE_STORAGE, JSON.stringify(updated));
+    }, 1000);
   };
 
   const handleEndSession = () => {
@@ -1874,7 +1905,7 @@ export function PromptInterface() {
     a.href = url;
     a.download = `${session.title.replace(/\s+/g, "-").toLowerCase()}-session.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
 
   if (!ready) return null;
