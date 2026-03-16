@@ -6,31 +6,25 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClaudeLogo } from "@/components/claude-logo";
-import { TEMPLATES, type Template } from "@/lib/templates";
-
-// ── Types ──
-
-interface Frame {
-  number: number;
-  promptText: string;
-  html: string;
-  acknowledgment: string;
-  suggestions?: string[];
-  createdAt: number;
-}
-
-interface SessionData {
-  title: string;
-  frames: Frame[];
-  style: string;
-}
+import { TEMPLATES, resolveTemplate, type Template } from "@/lib/templates";
+import {
+  saveSession,
+  loadSession,
+  clearSession,
+  saveAutosave,
+  loadAutosave,
+  clearAutosave,
+  migrateFromLocalStorage,
+  migrateFromSessionStorage,
+  clearLegacyStorage,
+  type Frame,
+  type SessionData,
+} from "@/lib/storage";
 
 // ── Constants ──
 
 const API_KEY_STORAGE = "aop_api_key";
-const SESSION_STORAGE = "aop_session";
 const MODEL_STORAGE = "aop_model";
-const AUTOSAVE_STORAGE = "aop_autosave";
 
 const MODELS = [
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6", desc: "Latest" },
@@ -526,18 +520,6 @@ function getStoredKey(): string {
   return sessionStorage.getItem(API_KEY_STORAGE) ?? "";
 }
 
-function getStoredSession(): SessionData | null {
-  if (typeof window === "undefined") return null;
-  const raw = sessionStorage.getItem(SESSION_STORAGE);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    return { style: "default", ...parsed };
-  } catch {
-    return null;
-  }
-}
-
 function getStoredModel(): ModelId {
   if (typeof window === "undefined") return "claude-sonnet-4-5";
   const stored = localStorage.getItem(MODEL_STORAGE);
@@ -545,20 +527,6 @@ function getStoredModel(): ModelId {
   return "claude-sonnet-4-5";
 }
 
-function getAutoSaved(): SessionData | null {
-  if (typeof window === "undefined") return null;
-  const raw = localStorage.getItem(AUTOSAVE_STORAGE);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed?.title && Array.isArray(parsed.frames) && parsed.frames.length > 0) {
-      return { style: "default", ...parsed };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 // ── API Key Setup ──
 
@@ -679,7 +647,7 @@ function SessionSetup({
               onKeyDown={(e) =>
                 e.key === "Enter" &&
                 title.trim() &&
-                onStart(title.trim(), style, selectedTemplate)
+                onStart(title.trim(), style, resolveTemplate(selectedTemplate, style))
               }
             />
           </div>
@@ -729,7 +697,7 @@ function SessionSetup({
 
           <Button
             onClick={() =>
-              title.trim() && onStart(title.trim(), style, selectedTemplate)
+              title.trim() && onStart(title.trim(), style, resolveTemplate(selectedTemplate, style))
             }
             disabled={!title.trim()}
             className="w-full py-3 text-base"
@@ -1181,6 +1149,81 @@ function isOneShot(prompt: string): boolean {
   return ONE_SHOT_PATTERNS.some((re) => re.test(prompt));
 }
 
+// ── Gallery sidebar (virtual list) ──
+
+const SIDEBAR_ITEM_H = 64; // px — must match the rendered button height
+
+function GallerySidebar({
+  frames,
+  selectedIdx,
+  onSelect,
+}: {
+  frames: SessionData["frames"];
+  selectedIdx: number;
+  onSelect: (i: number) => void;
+}) {
+  const OVERSCAN = 6;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewH, setViewH] = useState(600);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setViewH(el.clientHeight));
+    ro.observe(el);
+    const onScroll = () => setScrollTop(el.scrollTop);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => { ro.disconnect(); el.removeEventListener("scroll", onScroll); };
+  }, []);
+
+  // Keep selected item visible during playback / export
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const itemTop = selectedIdx * SIDEBAR_ITEM_H;
+    const itemBot = itemTop + SIDEBAR_ITEM_H;
+    if (itemTop < el.scrollTop || itemBot > el.scrollTop + el.clientHeight) {
+      el.scrollTo({ top: itemTop - el.clientHeight / 2 + SIDEBAR_ITEM_H / 2, behavior: "smooth" });
+    }
+  }, [selectedIdx]);
+
+  const startIdx = Math.max(0, Math.floor(scrollTop / SIDEBAR_ITEM_H) - OVERSCAN);
+  const endIdx = Math.min(frames.length - 1, Math.ceil((scrollTop + viewH) / SIDEBAR_ITEM_H) + OVERSCAN);
+
+  return (
+    <div ref={containerRef} className="w-64 overflow-y-auto border-l">
+      <div style={{ height: frames.length * SIDEBAR_ITEM_H, position: "relative" }}>
+        {frames.slice(startIdx, endIdx + 1).map((f, localIdx) => {
+          const i = startIdx + localIdx;
+          return (
+            <button
+              key={f.number}
+              onClick={() => onSelect(i)}
+              style={{ position: "absolute", top: i * SIDEBAR_ITEM_H, left: 0, right: 0, height: SIDEBAR_ITEM_H }}
+              className={`border-b px-4 py-3 text-left transition-colors ${
+                i === selectedIdx ? "bg-card" : "hover:bg-card/50"
+              }`}
+            >
+              <div className="flex items-baseline justify-between">
+                <span className="text-xs font-medium text-foreground">
+                  {String(f.number).padStart(3, "0")}
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  {new Date(f.createdAt).toLocaleTimeString()}
+                </span>
+              </div>
+              <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+                {f.promptText}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function GalleryView({
   session,
   onBack,
@@ -1514,32 +1557,11 @@ function GalleryView({
           )}
         </div>
 
-        <div className="w-64 overflow-y-auto border-l">
-          {frames.map((f, i) => (
-            <button
-              key={f.number}
-              onClick={() => {
-                setPlaying(false);
-                setSelectedIdx(i);
-              }}
-              className={`w-full border-b px-4 py-3 text-left transition-colors ${
-                i === selectedIdx ? "bg-card" : "hover:bg-card/50"
-              }`}
-            >
-              <div className="flex items-baseline justify-between">
-                <span className="text-xs font-medium text-foreground">
-                  {String(f.number).padStart(3, "0")}
-                </span>
-                <span className="text-[10px] text-muted-foreground">
-                  {new Date(f.createdAt).toLocaleTimeString()}
-                </span>
-              </div>
-              <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
-                {f.promptText}
-              </p>
-            </button>
-          ))}
-        </div>
+        <GallerySidebar
+          frames={frames}
+          selectedIdx={selectedIdx}
+          onSelect={(i) => { setPlaying(false); setSelectedIdx(i); }}
+        />
       </div>
     </div>
   );
@@ -2054,15 +2076,34 @@ export function PromptInterface() {
 
   useEffect(() => {
     const storedKey = getStoredKey();
-    const storedSession = getStoredSession();
     if (storedKey) setApiKey(storedKey);
-    if (storedSession) {
-      setSession(storedSession);
-    } else {
-      const autoSaved = getAutoSaved();
-      if (autoSaved) setRecoverySession(autoSaved);
-    }
-    setReady(true);
+
+    (async () => {
+      let sess = await loadSession();
+
+      // Migrate from old sessionStorage/localStorage if IDB is empty
+      if (!sess) {
+        sess = migrateFromSessionStorage();
+        if (sess) {
+          await saveSession(sess);
+          await saveAutosave(sess);
+        }
+      }
+
+      if (sess) {
+        setSession(sess);
+      } else {
+        let auto = await loadAutosave();
+        if (!auto) auto = migrateFromLocalStorage();
+        if (auto) {
+          await saveAutosave(auto);
+          setRecoverySession(auto);
+        }
+      }
+
+      clearLegacyStorage();
+      setReady(true);
+    })();
   }, []);
 
   const handleApiKey = (key: string) => {
@@ -2070,7 +2111,7 @@ export function PromptInterface() {
     setApiKey(key);
   };
 
-  const handleStartSession = (
+  const handleStartSession = async (
     title: string,
     style: StyleId,
     template: Template
@@ -2086,32 +2127,32 @@ export function PromptInterface() {
       });
     }
     const newSession: SessionData = { title, frames, style };
-    sessionStorage.setItem(SESSION_STORAGE, JSON.stringify(newSession));
-    localStorage.setItem(AUTOSAVE_STORAGE, JSON.stringify(newSession));
+    await saveSession(newSession);
+    await saveAutosave(newSession);
     setSession(newSession);
     setRecoverySession(null);
   };
 
-  const handleLoadSession = (loaded: SessionData) => {
-    sessionStorage.setItem(SESSION_STORAGE, JSON.stringify(loaded));
-    localStorage.setItem(AUTOSAVE_STORAGE, JSON.stringify(loaded));
+  const handleLoadSession = async (loaded: SessionData) => {
+    await saveSession(loaded);
+    await saveAutosave(loaded);
     setSession(loaded);
     setRecoverySession(null);
   };
 
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleUpdateSession = (updated: SessionData) => {
-    sessionStorage.setItem(SESSION_STORAGE, JSON.stringify(updated));
     setSession(updated);
+    saveSession(updated).catch(() => {});
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      localStorage.setItem(AUTOSAVE_STORAGE, JSON.stringify(updated));
+      saveAutosave(updated).catch(() => {});
     }, 1000);
   };
 
   const handleEndSession = () => {
-    sessionStorage.removeItem(SESSION_STORAGE);
-    localStorage.removeItem(AUTOSAVE_STORAGE);
+    clearSession().catch(() => {});
+    clearAutosave().catch(() => {});
     setSession(null);
   };
 
@@ -2162,7 +2203,7 @@ export function PromptInterface() {
               <Button
                 variant="outline"
                 onClick={() => {
-                  localStorage.removeItem(AUTOSAVE_STORAGE);
+                  clearAutosave().catch(() => {});
                   setRecoverySession(null);
                 }}
                 className="flex-1"
