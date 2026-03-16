@@ -618,8 +618,7 @@ function SessionSetup({
                       {t.desc}
                     </span>
                   </button>
-                );
-              })}
+              ))}
             </div>
           </div>
 
