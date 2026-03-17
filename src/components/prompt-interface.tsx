@@ -14,6 +14,12 @@ import {
   saveAutosave,
   loadAutosave,
   clearAutosave,
+  appendFrame,
+  appendFrameAutosave,
+  removeLastFrame,
+  removeLastFrameAutosave,
+  saveSessionMeta,
+  saveAutosaveMeta,
   migrateFromLocalStorage,
   migrateFromSessionStorage,
   clearLegacyStorage,
@@ -159,14 +165,18 @@ const INITIAL_SUGGESTIONS: Record<string, string[]> = {
   ],
 };
 
-function pickInitialSuggestions(style = "default", n = 3): string[] {
-  const pool = [...(INITIAL_SUGGESTIONS[style] ?? INITIAL_SUGGESTIONS.default)];
-  const picked: string[] = [];
-  for (let i = 0; i < n && pool.length > 0; i++) {
-    const idx = Math.floor(Math.random() * pool.length);
-    picked.push(pool.splice(idx, 1)[0]);
+function pickRandom<T>(pool: T[], n: number): T[] {
+  const copy = [...pool];
+  const out: T[] = [];
+  for (let i = 0; i < n && copy.length > 0; i++) {
+    const idx = Math.floor(Math.random() * copy.length);
+    out.push(copy.splice(idx, 1)[0]);
   }
-  return picked;
+  return out;
+}
+
+function pickInitialSuggestions(style = "default", n = 3): string[] {
+  return pickRandom(INITIAL_SUGGESTIONS[style] ?? INITIAL_SUGGESTIONS.default, n);
 }
 
 async function fetchGeneratedSuggestions(
@@ -1291,6 +1301,14 @@ function GalleryView({
 
   const handleRecordTimelapse = async () => {
     if (frames.length < 2) return;
+
+    if (frames.length > 100) {
+      const mins = Math.ceil((frames.length * secPerFrame) / 60);
+      if (!window.confirm(
+        `This session has ${frames.length} frames. Export will take ~${mins} minutes and produce a large file. Continue?`
+      )) return;
+    }
+
     abortRef.current = { aborted: false };
     setExporting(true);
 
@@ -1572,14 +1590,18 @@ function GalleryView({
 function ActiveSession({
   apiKey,
   session,
-  onUpdate,
+  onFrameAdded,
+  onFrameRemoved,
+  onMetaChanged,
   onEnd,
   onChangeKey,
   onSave,
 }: {
   apiKey: string;
   session: SessionData;
-  onUpdate: (session: SessionData) => void;
+  onFrameAdded: (session: SessionData, frame: Frame) => void;
+  onFrameRemoved: (session: SessionData, removedNumber: number) => void;
+  onMetaChanged: (session: SessionData) => void;
   onEnd: () => void;
   onChangeKey: () => void;
   onSave: () => void;
@@ -1613,8 +1635,8 @@ function ActiveSession({
   };
 
   const handleStyleChange = useCallback((id: StyleId) => {
-    onUpdate({ ...sessionRef.current, style: id });
-  }, [onUpdate]);
+    onMetaChanged({ ...sessionRef.current, style: id });
+  }, [onMetaChanged]);
 
   const lastFrame = session.frames[session.frames.length - 1];
 
@@ -1720,7 +1742,8 @@ function ActiveSession({
         };
 
         const newFrames = [...baseFrames, newFrame];
-        onUpdate({ ...sessionRef.current, frames: newFrames });
+        const updated = { ...sessionRef.current, frames: newFrames };
+        onFrameAdded(updated, newFrame);
         if (!isRetry) setPrompt("");
         setStreamText("");
         setAck(result.acknowledgment);
@@ -1746,7 +1769,7 @@ function ActiveSession({
         setLoading(false);
       }
     },
-    [apiKey, model, onUpdate]
+    [apiKey, model, onFrameAdded]
   );
 
   const handleCancel = useCallback(() => {
@@ -1781,9 +1804,10 @@ function ActiveSession({
     retryRef.current += 1;
     setLoading(true);
     const s = sessionRef.current;
+    const removedFrame = s.frames[s.frames.length - 1];
     const framesBeforeBad = s.frames.slice(0, -1);
     const prevFrame = framesBeforeBad[framesBeforeBad.length - 1];
-    onUpdate({ ...s, frames: framesBeforeBad });
+    onFrameRemoved({ ...s, frames: framesBeforeBad }, removedFrame.number);
     setTimeout(() => {
       generate(
         lastPromptRef.current,
@@ -1793,7 +1817,7 @@ function ActiveSession({
         true
       );
     }, 100);
-  }, [loading, onUpdate, generate]);
+  }, [loading, onFrameRemoved, generate]);
 
   if (showGallery) {
     return (
@@ -1899,10 +1923,11 @@ function ActiveSession({
                 </div>
                 <button
                   onClick={() => {
-                    onUpdate({
+                    const removed = session.frames[session.frames.length - 1];
+                    onFrameRemoved({
                       ...session,
                       frames: session.frames.slice(0, -1),
-                    });
+                    }, removed?.number ?? 0);
                     setBlankWarning(false);
                     setAck(null);
                   }}
@@ -1932,18 +1957,7 @@ function ActiveSession({
               ))}
               {suggestionPoolRef.current.length > 3 && (
                 <button
-                  onClick={() => {
-                    const pool = suggestionPoolRef.current;
-                    const next: string[] = [];
-                    const remaining = pool.filter((s) => !suggestions.includes(s));
-                    const src = remaining.length >= 3 ? remaining : pool;
-                    const copy = [...src];
-                    for (let i = 0; i < 3 && copy.length > 0; i++) {
-                      const idx = Math.floor(Math.random() * copy.length);
-                      next.push(copy.splice(idx, 1)[0]);
-                    }
-                    setSuggestions(next);
-                  }}
+                  onClick={() => setSuggestions(pickRandom(suggestionPoolRef.current, 3))}
                   className="rounded px-1.5 py-1 text-[11px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
                   title="Show different suggestions"
                 >
@@ -2022,10 +2036,11 @@ function ActiveSession({
               {session.frames.length > 0 && (
                 <button
                   onClick={() => {
-                    onUpdate({
+                    const removed = session.frames[session.frames.length - 1];
+                    onFrameRemoved({
                       ...session,
                       frames: session.frames.slice(0, -1),
-                    });
+                    }, removed?.number ?? 0);
                     setAck(null);
                     setError(null);
                   }}
@@ -2141,12 +2156,31 @@ export function PromptInterface() {
   };
 
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleUpdateSession = (updated: SessionData) => {
+
+  const handleFrameAdded = (updated: SessionData, frame: Frame) => {
     setSession(updated);
-    saveSession(updated).catch(() => {});
+    appendFrame(updated, frame).catch(() => {});
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      saveAutosave(updated).catch(() => {});
+      appendFrameAutosave(updated, frame).catch(() => {});
+    }, 1000);
+  };
+
+  const handleFrameRemoved = (updated: SessionData, removedNumber: number) => {
+    setSession(updated);
+    removeLastFrame(updated, removedNumber).catch(() => {});
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      removeLastFrameAutosave(updated, removedNumber).catch(() => {});
+    }, 1000);
+  };
+
+  const handleMetaChanged = (updated: SessionData) => {
+    setSession(updated);
+    saveSessionMeta(updated).catch(() => {});
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      saveAutosaveMeta(updated).catch(() => {});
     }, 1000);
   };
 
@@ -2232,7 +2266,9 @@ export function PromptInterface() {
     <ActiveSession
       apiKey={apiKey}
       session={session}
-      onUpdate={handleUpdateSession}
+      onFrameAdded={handleFrameAdded}
+      onFrameRemoved={handleFrameRemoved}
+      onMetaChanged={handleMetaChanged}
       onEnd={handleEndSession}
       onChangeKey={handleChangeKey}
       onSave={handleSaveSession}
