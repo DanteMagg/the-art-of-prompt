@@ -1023,46 +1023,28 @@ async function captureFromIframe(
   recCanvas: HTMLCanvasElement,
   track: MediaStreamTrack,
   durationMs: number,
-  captureFps: number,
+  _captureFps: number,
   abortSignal?: { aborted: boolean }
 ) {
-  const intervalMs = 1000 / captureFps;
-  let directCaptureWorks: boolean | null = null;
-
-  const doCapture = async () => {
+  // Poll for first visible paint (up to 5 attempts × 200ms)
+  let captured = false;
+  for (let p = 0; p < 5; p++) {
+    if (abortSignal?.aborted) return;
     try {
-      if (directCaptureWorks !== false) {
-        const grabbed = await captureIframeOnce(iframe, recCanvas);
-        if (grabbed) { directCaptureWorks = true; return; }
-        directCaptureWorks = false;
-      }
-      await captureIframeWithHtml2Canvas(iframe, recCanvas);
-    } catch { /* keep last frame */ }
-  };
-
-  const pushFrame = () => {
-    (track as unknown as RequestFrameFn).requestFrame?.();
-  };
-
-  // Brief poll for first visible paint
-  const deadline = Date.now() + 500;
-  while (Date.now() < deadline) {
-    await doCapture();
-    if (!isCanvasBlank(recCanvas)) break;
-    await new Promise((r) => setTimeout(r, 50));
+      const grabbed = await captureIframeOnce(iframe, recCanvas);
+      if (grabbed && !isCanvasBlank(recCanvas)) { captured = true; break; }
+    } catch { /* continue polling */ }
+    await new Promise((r) => setTimeout(r, 200));
   }
 
-  // If direct capture doesn't work, reduce fps to avoid html2canvas bottleneck
-  const effectiveFps = directCaptureWorks === false ? Math.min(captureFps, 4) : captureFps;
-  const effectiveInterval = 1000 / effectiveFps;
-  const totalFrames = Math.round(durationMs / effectiveInterval);
-
-  for (let i = 0; i < totalFrames; i++) {
-    if (abortSignal?.aborted) break;
-    await doCapture();
-    pushFrame();
-    await new Promise((r) => setTimeout(r, effectiveInterval));
+  // Last-resort fallback if direct capture never worked
+  if (!captured) {
+    try { await captureIframeWithHtml2Canvas(iframe, recCanvas); } catch { /* keep last frame */ }
   }
+
+  // Push single frame — captureStream(0) holds it for the duration
+  (track as unknown as RequestFrameFn).requestFrame?.();
+  await new Promise((r) => setTimeout(r, durationMs));
 }
 
 const FREEZE_SCRIPT = `<script>(function(){var o=window.requestAnimationFrame;var q=[];var f=true;window.requestAnimationFrame=function(c){if(f){q.push(c);return 0}return o.call(window,c)};window.__thaw=function(){f=false;q.forEach(function(c){o.call(window,c)});q=[]}})()</script>`;
