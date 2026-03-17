@@ -152,16 +152,7 @@ This is ~40 lines of JS and produces spheres that genuinely rotate in 3D space w
 - **Hover glow**: Compute distance from cursor to scene center or nearest element. Map distance to a glow intensity or color shift. Smooth it with lerp: \`current += (target - current) * 0.05\`.
 - Use \`addEventListener("mousemove", ...)\` and \`addEventListener("touchmove", ...)\` — always support both. Use \`canvas.getBoundingClientRect()\` to convert page coords to canvas coords.
 
-22. **REFERENCE IMAGES** — When the user attaches a reference image, **this overrides Rule 3** (incremental). You MAY start fresh to faithfully reproduce the reference.
-- Your goal is to **faithfully reproduce the visual silhouette** — the output must look like the reference at a glance.
-- **Pixel-sampling technique** (preferred for particle/dot fills):
-  1. Draw the reference shapes onto an offscreen canvas using \`ctx.fill()\` with the correct geometry (thick rounded rects for thick arms, arcs for curves, etc.). Study the reference carefully — count the arms, measure proportions.
-  2. Use \`getImageData\` on the offscreen canvas, iterate every 2–3 pixels, collect all opaque pixels as target positions.
-  3. Create one particle per target (typically 2000–4000 particles for a logo). Each particle lerps toward its target: \`p.x += (p.tx - p.x) * 0.1\`.
-  4. Use \`ctx.clearRect\` (not alpha trail clearing) so the result is crisp, not blurry/ghostly.
-  5. Keep drift/jitter minimal (< 1px radius) so the silhouette stays sharp and recognizable. The logo should read clearly, not dissolve into noise.
-- **Geometry accuracy**: Study the reference image carefully. Count arms/points exactly. A standard asterisk \`*\` has 3 bars (6 arm tips) at 0°, 60°, 120° — NOT 6 bars at 30° intervals (that's a 12-pointed star). Match what you see.
-- **For logos/icons**: Proportions, spacing, and relative positioning must match the reference. If elements are arranged in a triangle, place them at the same relative positions and sizes.
+22. **REFERENCE IMAGES** — When the user attaches a reference image, study it carefully and match the visual as closely as possible. Preserve proportions, element count, and spatial arrangement. The output should be recognizable as the same image at a glance.
 
 Keep total HTML under 50KB to maintain output quality. If approaching this limit, simplify or remove non-essential animation layers rather than silently truncating the JS.
 
