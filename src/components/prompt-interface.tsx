@@ -622,28 +622,34 @@ function LoadingCanvas() {
 const HEALTH_CHECK_SCRIPT = `<script>
 (function(){
   var _o=(window.location.ancestorOrigins&&window.location.ancestorOrigins[0])||(document.referrer?new URL(document.referrer).origin:null)||'*';
+  var resolved=false;
   var t=setTimeout(function(){
-    window.parent.postMessage({type:'artifact-health',blank:true},_o);
-  },3000);
+    if(!resolved){resolved=true;window.parent.postMessage({type:'artifact-health',blank:true},_o);}
+  },5000);
   function check(){
+    if(resolved)return;
     var hasCanvas=document.querySelector('canvas');
     var hasSvg=document.querySelector('svg');
     var bodyH=document.body?document.body.scrollHeight:0;
     var kids=document.body?document.body.children.length:0;
-    // Also check for fixed/absolute positioned children that don't contribute to scrollHeight
-    var hasFixedContent=document.body&&Array.from(document.body.querySelectorAll('*')).some(function(el){
+    var hasFixedContent=false;
+    if(document.body){try{hasFixedContent=Array.from(document.body.querySelectorAll('*')).some(function(el){
       var s=getComputedStyle(el);
       return (s.position==='fixed'||s.position==='absolute')&&el.getBoundingClientRect().width>0;
-    });
+    });}catch(e){}}
     var visible=bodyH>50&&kids>0;
     if(hasCanvas||hasSvg||visible||hasFixedContent){
-      clearTimeout(t);
+      resolved=true;clearTimeout(t);
       window.parent.postMessage({type:'artifact-health',blank:false},_o);
     }
   }
-  window.addEventListener('load',function(){setTimeout(check,800);});
-  window.addEventListener('error',function(e){
-    window.parent.postMessage({type:'artifact-health',blank:true,error:e.message||'JS error'},_o);
+  // Poll repeatedly instead of checking once — complex artifacts may need time to initialize
+  window.addEventListener('load',function(){
+    var polls=0;
+    var iv=setInterval(function(){
+      check();polls++;
+      if(resolved||polls>=8){clearInterval(iv);}
+    },500);
   });
 })();
 </script>`;
