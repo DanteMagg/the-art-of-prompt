@@ -638,7 +638,7 @@ function LoadingCanvas() {
 
   return (
     <div className="flex h-full items-center justify-center bg-background">
-      <p className="font-mono text-4xl font-bold tracking-tight text-foreground/70">
+      <p className="font-mono text-sm tracking-widest text-muted-foreground">
         {displayed}
       </p>
     </div>
