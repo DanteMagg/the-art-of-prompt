@@ -490,7 +490,7 @@ async function runFrame(
   try {
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 8000,
+      max_tokens: 16000,
       system: systemPrompt,
       messages: newMessages,
     });
