@@ -1027,19 +1027,24 @@ async function captureFromIframe(
   abortSignal?: { aborted: boolean }
 ) {
   const intervalMs = 1000 / captureFps;
+  let directCaptureWorks: boolean | null = null;
 
   const doCapture = async () => {
     try {
-      const grabbed = await captureIframeOnce(iframe, recCanvas);
-      if (!grabbed) await captureIframeWithHtml2Canvas(iframe, recCanvas);
-    } catch { /* keep last */ }
+      if (directCaptureWorks !== false) {
+        const grabbed = await captureIframeOnce(iframe, recCanvas);
+        if (grabbed) { directCaptureWorks = true; return; }
+        directCaptureWorks = false;
+      }
+      await captureIframeWithHtml2Canvas(iframe, recCanvas);
+    } catch { /* keep last frame */ }
   };
 
   const pushFrame = () => {
     (track as unknown as RequestFrameFn).requestFrame?.();
   };
 
-  // Brief poll for first visible paint (iframe onload already fired)
+  // Brief poll for first visible paint
   const deadline = Date.now() + 500;
   while (Date.now() < deadline) {
     await doCapture();
@@ -1047,12 +1052,16 @@ async function captureFromIframe(
     await new Promise((r) => setTimeout(r, 50));
   }
 
-  const totalFrames = Math.round(durationMs / intervalMs);
+  // If direct capture doesn't work, reduce fps to avoid html2canvas bottleneck
+  const effectiveFps = directCaptureWorks === false ? Math.min(captureFps, 4) : captureFps;
+  const effectiveInterval = 1000 / effectiveFps;
+  const totalFrames = Math.round(durationMs / effectiveInterval);
+
   for (let i = 0; i < totalFrames; i++) {
     if (abortSignal?.aborted) break;
     await doCapture();
     pushFrame();
-    await new Promise((r) => setTimeout(r, intervalMs));
+    await new Promise((r) => setTimeout(r, effectiveInterval));
   }
 }
 
@@ -1292,7 +1301,7 @@ function GalleryView({
       recorder.start();
       const track = stream.getVideoTracks()[0];
       const durationMs = secPerFrame * 1000;
-      const captureFps = 60;
+      const captureFps = 30;
 
       const initCtx = canvas.getContext("2d", { willReadFrequently: true });
       if (initCtx) { initCtx.fillStyle = "#FBF8EF"; initCtx.fillRect(0, 0, VW, VH); }
