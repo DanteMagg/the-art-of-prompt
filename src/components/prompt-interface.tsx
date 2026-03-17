@@ -1026,6 +1026,8 @@ async function captureFromIframe(
   _captureFps: number,
   abortSignal?: { aborted: boolean }
 ) {
+  const t0 = performance.now();
+
   // Poll for first visible paint (up to 5 attempts × 200ms)
   let captured = false;
   for (let p = 0; p < 5; p++) {
@@ -1037,14 +1039,21 @@ async function captureFromIframe(
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  // Last-resort fallback if direct capture never worked
-  if (!captured) {
+  if (captured) {
+    // Let the render fully settle, then re-capture for a clean frame
+    await new Promise((r) => setTimeout(r, 400));
+    try { await captureIframeOnce(iframe, recCanvas); } catch { /* keep what we have */ }
+  } else {
     try { await captureIframeWithHtml2Canvas(iframe, recCanvas); } catch { /* keep last frame */ }
   }
 
-  // Push single frame — captureStream(0) holds it for the duration
+  // Push frame — captureStream(0) holds it for the duration
   (track as unknown as RequestFrameFn).requestFrame?.();
-  await new Promise((r) => setTimeout(r, durationMs));
+
+  // Subtract capture overhead so total wall-clock per frame stays consistent
+  const elapsed = performance.now() - t0;
+  const remaining = Math.max(0, durationMs - elapsed);
+  await new Promise((r) => setTimeout(r, remaining));
 }
 
 const FREEZE_SCRIPT = `<script>(function(){var o=window.requestAnimationFrame;var q=[];var f=true;window.requestAnimationFrame=function(c){if(f){q.push(c);return 0}return o.call(window,c)};window.__thaw=function(){f=false;q.forEach(function(c){o.call(window,c)});q=[]}})()</script>`;
