@@ -567,7 +567,34 @@ function IdleCanvas() {
   );
 }
 
+const LOADING_WORDS = [
+  "evolving",
+  "imagining",
+  "rendering",
+  "composing",
+  "conjuring",
+  "painting",
+  "thinking",
+  "dreaming",
+  "sculpting",
+  "weaving",
+];
+
 function LoadingCanvas() {
+  const [wordIdx, setWordIdx] = useState(0);
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const cycle = setInterval(() => {
+      setVisible(false);
+      setTimeout(() => {
+        setWordIdx((i) => (i + 1) % LOADING_WORDS.length);
+        setVisible(true);
+      }, 300);
+    }, 2000);
+    return () => clearInterval(cycle);
+  }, []);
+
   return (
     <div className="flex h-full items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-6">
@@ -578,7 +605,12 @@ function LoadingCanvas() {
             style={{ animation: "spin 1s linear infinite" }}
           />
         </div>
-        <p className="text-xs text-muted-foreground">Evolving...</p>
+        <p
+          className="text-xs text-muted-foreground transition-opacity duration-300"
+          style={{ opacity: visible ? 1 : 0 }}
+        >
+          {LOADING_WORDS[wordIdx]}
+        </p>
       </div>
       <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
