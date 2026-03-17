@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClaudeLogo } from "@/components/claude-logo";
 import { TEMPLATES, resolveTemplate, type Template } from "@/lib/templates";
+import { extractBalancedJSON, parseClaudeJSON } from "@/lib/json-helpers";
 import {
   saveSession,
   loadSession,
@@ -214,7 +215,12 @@ Return as a JSON array: ["...", "...", ...]`,
   const arrStart = text.indexOf("[");
   const arrEnd = text.lastIndexOf("]");
   if (arrStart === -1 || arrEnd === -1) return [];
-  const arr: unknown = JSON.parse(text.slice(arrStart, arrEnd + 1));
+  let arr: unknown;
+  try {
+    arr = JSON.parse(text.slice(arrStart, arrEnd + 1));
+  } catch {
+    return [];
+  }
   if (!Array.isArray(arr)) return [];
   return (arr as unknown[]).filter((s): s is string => typeof s === "string").slice(0, 30);
 }
@@ -254,6 +260,13 @@ When the user requests 3D, switch to Canvas and implement **actual 3D math**:
 - Draw each sphere as a filled arc with color scaled by brightness, plus a specular highlight whose position shifts based on the 3D light angle
 
 This is ~40 lines of JS and produces spheres that genuinely rotate in 3D space with dynamic lighting. Do NOT use CSS perspective / transform-style: preserve-3d on SVG layers — that creates parallax, not real 3D.
+
+**3D POLYGON MESHES (prisms, cubes, polyhedra)** — When building multi-face 3D objects:
+- Compute face normals as the **cross product of two edge vectors**: \`n = normalize((B-A) × (C-A))\`. Never approximate normals from a simplified formula — approximations produce invisible or flickering faces at certain rotation angles.
+- Transform normals through the **same rotation matrices applied to the vertices**. If you rotate vertices with matrix R, the normal must also be rotated by R. Computing normals separately from a simplified trig expression breaks culling whenever the spin angle is not near zero.
+- For **convex shapes** (prisms, cubes, pyramids, dodecahedra): **skip backface culling entirely**. Just draw all faces sorted back-to-front. Painter's algorithm is sufficient for convex objects and eliminates all culling bugs. Only implement culling for complex concave meshes where overdraw is a real performance concern.
+- **Z-sort** faces by the average projected Z of all their vertices (after rotation, before perspective divide). Sort highest-Z (furthest from camera) first so nearer faces overdraw them.
+- Always use \`ctx.closePath()\` on every face path before fill/stroke, or the last edge will be missing.
 
 **COORDINATE SPACES** — Never mix canvas transforms (ctx.translate/rotate) with manual position math on the same elements — this causes double-transformation where objects fly off-screen or jitter. Pick ONE approach: either compute all positions manually in world space and draw with no canvas transform, or use canvas transforms uniformly for everything. When doing 3D projection, always compute orbit/movement on the ORIGINAL untransformed coordinates, then apply rotation and projection exactly once per point.
 
@@ -349,52 +362,6 @@ function buildSystemPrompt(styleId: string): string {
   return BASE_SYSTEM_PROMPT;
 }
 
-// ── JSON helpers ──
-
-/** Extracts the first complete {...} object by tracking brace depth.
- *  Stops exactly at the closing brace, ignoring any trailing prose. */
-function extractBalancedJSON(text: string): string | null {
-  const start = text.indexOf("{");
-  if (start === -1) return null;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (esc) { esc = false; continue; }
-    if (ch === "\\" && inStr) { esc = true; continue; }
-    if (ch === '"') { inStr = !inStr; continue; }
-    if (!inStr) {
-      if (ch === "{") depth++;
-      else if (ch === "}") { depth--; if (depth === 0) return text.slice(start, i + 1); }
-    }
-  }
-  return null;
-}
-
-/** Escapes bare control characters inside JSON string literals so JSON.parse succeeds. */
-function sanitizeJSONControlChars(json: string): string {
-  let out = "";
-  let inStr = false;
-  let esc = false;
-  for (let i = 0; i < json.length; i++) {
-    const ch = json[i];
-    if (esc) { out += ch; esc = false; continue; }
-    if (ch === "\\" && inStr) { out += ch; esc = true; continue; }
-    if (ch === '"') { inStr = !inStr; out += ch; continue; }
-    if (inStr) {
-      const c = ch.charCodeAt(0);
-      if (c < 0x20 || c === 0x7f) {
-        if (ch === "\n") { out += "\\n"; continue; }
-        if (ch === "\r") { out += "\\r"; continue; }
-        if (ch === "\t") { out += "\\t"; continue; }
-        continue; // drop other control chars
-      }
-    }
-    out += ch;
-  }
-  return out;
-}
 
 // ── Claude API ──
 
@@ -505,16 +472,7 @@ async function callClaude(
     );
   }
 
-  let parsed: { html: string; acknowledgment: string; suggestions?: string[] };
-  try {
-    parsed = JSON.parse(jsonStr);
-  } catch {
-    // Fallback: escape bare control characters inside JSON string literals
-    parsed = JSON.parse(sanitizeJSONControlChars(jsonStr));
-  }
-  if (!parsed.html || !parsed.acknowledgment) {
-    throw new Error("Missing html or acknowledgment in response");
-  }
+  const parsed = parseClaudeJSON(jsonStr);
 
   return {
     html: parsed.html,
@@ -1747,7 +1705,16 @@ function ActiveSession({
         if (!isRetry) setPrompt("");
         setStreamText("");
         setAck(result.acknowledgment);
-        if (result.suggestions?.length) setSuggestions(result.suggestions);
+        if (result.suggestions?.length) {
+          setSuggestions(result.suggestions);
+          suggestionPoolRef.current = result.suggestions;
+        } else {
+          setSuggestions(
+            suggestionPoolRef.current.length > 0
+              ? pickRandom(suggestionPoolRef.current, 3)
+              : pickInitialSuggestions(sessionRef.current.style)
+          );
+        }
         if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
         ackTimerRef.current = setTimeout(() => setAck(null), 8000);
       } catch (err: unknown) {
