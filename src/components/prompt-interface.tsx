@@ -201,6 +201,11 @@ interface ClaudeResult {
   suggestions?: string[];
 }
 
+interface UserImage {
+  base64: string;
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+}
+
 async function callClaude(
   apiKey: string,
   previousHtml: string | null,
@@ -210,6 +215,7 @@ async function callClaude(
   styleId: string,
   promptHistory: { frame: number; prompt: string }[],
   screenshotBase64: string | null,
+  userImages: UserImage[],
   onText?: (accumulated: string) => void,
   signal?: AbortSignal
 ): Promise<ClaudeResult> {
@@ -260,10 +266,18 @@ async function callClaude(
     });
   }
 
-  messages.push({
-    role: "user",
-    content: `Frame ${frameNumber} prompt: ${promptText}\n\nRespond with JSON only: { "html": "...", "acknowledgment": "...", "suggestions": ["...", "...", "..."] }`,
+  const promptParts: Anthropic.ContentBlockParam[] = [];
+  for (const img of userImages) {
+    promptParts.push({
+      type: "image",
+      source: { type: "base64", media_type: img.mediaType, data: img.base64 },
+    });
+  }
+  promptParts.push({
+    type: "text",
+    text: `Frame ${frameNumber} prompt: ${promptText}${userImages.length > 0 ? "\n\n(Reference image(s) attached — use them as visual inspiration or reference for this frame.)" : ""}\n\nRespond with JSON only: { "html": "...", "acknowledgment": "...", "suggestions": ["...", "...", "..."] }`,
   });
+  messages.push({ role: "user", content: promptParts });
 
   let accumulated = "";
 
@@ -1573,7 +1587,8 @@ function ActiveSession({
       baseFrames: Frame[],
       baseHtml: string | null,
       fNum: number,
-      isRetry: boolean
+      isRetry: boolean,
+      images: UserImage[] = []
     ) => {
       abortRef.current?.abort();
       const controller = new AbortController();
@@ -1607,6 +1622,7 @@ function ActiveSession({
           sessionRef.current.style,
           history,
           screenshot,
+          isRetry ? [] : images,
           (text) => setStreamText(text),
           controller.signal
         );
@@ -1668,10 +1684,27 @@ function ActiveSession({
     setAck(null);
   }, []);
 
+  const [userImages, setUserImages] = useState<UserImage[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const addImageFromFile = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const [header, data] = dataUrl.split(",");
+      const mediaType = (header.match(/data:(image\/\w+)/)?.[1] ?? "image/jpeg") as UserImage["mediaType"];
+      setUserImages((prev) => prev.length >= 4 ? prev : [...prev, { base64: data, mediaType }]);
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
   const handleSubmit = useCallback(async () => {
     if (!prompt.trim() || loading) return;
     retryRef.current = 0;
     lastPromptRef.current = prompt.trim();
+    const imgs = [...userImages];
+    setUserImages([]);
     const frames = sessionRef.current.frames;
     const prevFrame = frames[frames.length - 1];
     await generate(
@@ -1679,9 +1712,10 @@ function ActiveSession({
       frames,
       prevFrame?.html ?? null,
       prevFrame ? prevFrame.number + 1 : 1,
-      false
+      false,
+      imgs
     );
-  }, [prompt, loading, generate]);
+  }, [prompt, loading, generate, userImages]);
 
   const handleBlankDetected = useCallback(() => {
     if (loading) return;
@@ -1861,19 +1895,78 @@ function ActiveSession({
           )}
 
           <div className="mt-auto space-y-3">
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Describe one change..."
-              disabled={loading}
-              className="min-h-[100px] resize-none text-sm placeholder:text-muted-foreground"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSubmit();
-                }
-              }}
-            />
+            {userImages.length > 0 && (
+              <div className="flex gap-2 flex-wrap">
+                {userImages.map((img, i) => (
+                  <div key={i} className="relative group">
+                    <img
+                      src={`data:${img.mediaType};base64,${img.base64}`}
+                      alt={`Upload ${i + 1}`}
+                      className="h-14 w-14 rounded border border-border object-cover"
+                    />
+                    <button
+                      onClick={() => setUserImages((prev) => prev.filter((_, j) => j !== i))}
+                      className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-foreground text-background text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="relative">
+              <Textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Describe one change..."
+                disabled={loading}
+                className="min-h-[100px] resize-none text-sm placeholder:text-muted-foreground pr-10"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                }}
+                onPaste={(e) => {
+                  const items = e.clipboardData?.items;
+                  if (!items) return;
+                  for (let i = 0; i < items.length; i++) {
+                    if (items[i].type.startsWith("image/")) {
+                      e.preventDefault();
+                      const file = items[i].getAsFile();
+                      if (file) addImageFromFile(file);
+                      return;
+                    }
+                  }
+                }}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = e.target.files;
+                  if (files) Array.from(files).forEach(addImageFromFile);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                disabled={loading || userImages.length >= 4}
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute right-2 bottom-2 rounded p-1 text-muted-foreground/50 hover:text-muted-foreground transition-colors disabled:opacity-30"
+                title="Attach image"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                  <circle cx="9" cy="9" r="2" />
+                  <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                </svg>
+              </button>
+            </div>
 
             {/* Quick actions */}
             <div className="flex flex-wrap gap-1">
