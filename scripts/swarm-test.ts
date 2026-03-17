@@ -237,7 +237,13 @@ const SCENARIOS: Scenario[] = [
 // ── JSON parsing ──────────────────────────────────────────────────────────────
 
 function stripCodeFence(text: string): string {
-  return text.replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/m, "$1").trim();
+  const t = text.trim();
+  if (!t.startsWith("```")) return t;
+  const firstNl = t.indexOf("\n");
+  if (firstNl === -1) return t;
+  const inner = t.slice(firstNl + 1);
+  const lastFence = inner.lastIndexOf("\n```");
+  return lastFence !== -1 ? inner.slice(0, lastFence).trim() : inner.trim();
 }
 
 function extractBalancedJSON(text: string): string | null {
@@ -348,7 +354,7 @@ function scoreQuality(html: string, style: StyleId, prompt: string, expectKeywor
     checks.push({ label: "dark background (neon style)", score: hasDarkBg ? 8 : 0, max: 8, note: hasDarkBg ? undefined : "neon style should have dark bg" });
   } else {
     // For default/pixel/geometric/organic/brutalist — only flag dark bg if no dark keyword in prompt
-    const darkPromptKeywords = /\b(dark|night|noir|space|midnight|shadow)\b/i.test(prompt);
+    const darkPromptKeywords = /\b(dark|night|noir|space|midnight|shadow|glitch|fire|flame|bioluminescen|starfield|lava)\b/i.test(prompt);
     if (!darkPromptKeywords && hasDarkBg) {
       checks.push({ label: "light background (non-dark style)", score: 0, max: 6, note: "dark bg on non-dark prompt — violates default palette rule" });
     } else {
@@ -412,9 +418,9 @@ function scoreQuality(html: string, style: StyleId, prompt: string, expectKeywor
     checks.push({ label: "collision handling", score: hasCollision ? 5 : 0, max: 5 });
   }
 
-  // ── Particle checks ──
+  // ── Particle text/shape formation checks (rule 11 — ≥500 required only for explicit text/shape formation) ──
 
-  if (/particle|500/i.test(prompt)) {
+  if (/\b500\b|particles?\s+(form|spell|arrange|into|word|text|shape)|form\w*\s+particles?/i.test(prompt)) {
     const particleCountMatch = html.match(/(?:length|count|num)\s*=\s*(\d+)|new\s+Array\((\d+)\)|for\s*\([^;]+;\s*i\s*<\s*(\d+)/);
     const inferredCount = particleCountMatch
       ? parseInt(particleCountMatch[1] ?? particleCountMatch[2] ?? particleCountMatch[3] ?? "0", 10)

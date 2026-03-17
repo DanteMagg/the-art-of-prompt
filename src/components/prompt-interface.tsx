@@ -751,7 +751,7 @@ async function captureIframeOnce(
   offscreen: HTMLIFrameElement,
   target: HTMLCanvasElement
 ): Promise<boolean> {
-  const ctx = target.getContext("2d");
+  const ctx = target.getContext("2d", { willReadFrequently: true });
   if (!ctx) return false;
   const doc = offscreen.contentDocument;
 
@@ -815,7 +815,7 @@ async function captureIframeWithHtml2Canvas(
   offscreen: HTMLIFrameElement,
   target: HTMLCanvasElement
 ) {
-  const ctx = target.getContext("2d");
+  const ctx = target.getContext("2d", { willReadFrequently: true });
   if (!ctx) return;
   const doc = offscreen.contentDocument;
   if (!doc?.body) return;
@@ -891,7 +891,7 @@ async function captureArtifactScreenshot(
 type RequestFrameFn = { requestFrame?: () => void };
 
 function isCanvasBlank(canvas: HTMLCanvasElement): boolean {
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return true;
   const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
   const r0 = d[0], g0 = d[1], b0 = d[2];
@@ -1178,7 +1178,7 @@ function GalleryView({
       const durationMs = secPerFrame * 1000;
       const captureFps = 60;
 
-      const initCtx = canvas.getContext("2d");
+      const initCtx = canvas.getContext("2d", { willReadFrequently: true });
       if (initCtx) { initCtx.fillStyle = "#FBF8EF"; initCtx.fillRect(0, 0, VW, VH); }
 
       const loadBatch = (start: number) => {
@@ -1447,6 +1447,13 @@ function ActiveSession({
   const suggestionPoolRef = useRef<string[]>([]);
   useEffect(() => { sessionRef.current = session; });
 
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
+    };
+  }, []);
+
   const handleModelChange = (id: ModelId) => {
     setModel(id);
     localStorage.setItem(MODEL_STORAGE, id);
@@ -1483,18 +1490,20 @@ function ActiveSession({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Capture screenshot in background after each frame renders
+  // Capture screenshot in background after each frame's HTML is set.
+  // Only cancel when the html itself changes (new frame), not on loading state changes —
+  // cancelling on loading=true meant fast users always got a null screenshot.
   useEffect(() => {
-    if (!lastFrame?.html || loading) return;
-    screenshotRef.current = null;
+    if (!lastFrame?.html) return;
     let cancelled = false;
     captureArtifactScreenshot(lastFrame.html).then((b64) => {
       if (!cancelled) screenshotRef.current = b64;
     });
     return () => {
       cancelled = true;
+      screenshotRef.current = null;
     };
-  }, [lastFrame?.html, loading]);
+  }, [lastFrame?.html]);
 
   // Esc exits fullscreen
   useEffect(() => {
@@ -1988,6 +1997,12 @@ export function PromptInterface() {
   };
 
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    };
+  }, []);
 
   const warnIdbError = (op: string) => (err: unknown) => {
     console.error(`[storage] ${op} failed:`, err);
