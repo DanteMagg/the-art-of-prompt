@@ -1018,81 +1018,6 @@ function isCanvasBlank(canvas: HTMLCanvasElement): boolean {
   return true;
 }
 
-async function captureFromIframe(
-  iframe: HTMLIFrameElement,
-  recCanvas: HTMLCanvasElement,
-  track: MediaStreamTrack,
-  durationMs: number,
-  captureFps: number,
-  abortSignal?: { aborted: boolean }
-) {
-  const intervalMs = 1000 / captureFps;
-  let directCaptureWorks: boolean | null = null;
-
-  const doCapture = async () => {
-    try {
-      if (directCaptureWorks !== false) {
-        const grabbed = await captureIframeOnce(iframe, recCanvas);
-        if (grabbed) { directCaptureWorks = true; return; }
-        directCaptureWorks = false;
-      }
-      await captureIframeWithHtml2Canvas(iframe, recCanvas);
-    } catch { /* keep last frame */ }
-  };
-
-  const pushFrame = () => {
-    (track as unknown as RequestFrameFn).requestFrame?.();
-  };
-
-  // Brief poll for first visible paint
-  const deadline = Date.now() + 500;
-  while (Date.now() < deadline) {
-    await doCapture();
-    if (!isCanvasBlank(recCanvas)) break;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-
-  // If direct capture doesn't work, reduce fps to avoid html2canvas bottleneck
-  const effectiveFps = directCaptureWorks === false ? Math.min(captureFps, 4) : captureFps;
-  const effectiveInterval = 1000 / effectiveFps;
-  const totalFrames = Math.round(durationMs / effectiveInterval);
-
-  for (let i = 0; i < totalFrames; i++) {
-    if (abortSignal?.aborted) break;
-    await doCapture();
-    pushFrame();
-    await new Promise((r) => setTimeout(r, effectiveInterval));
-  }
-}
-
-const FREEZE_SCRIPT = `<script>(function(){var o=window.requestAnimationFrame;var q=[];var f=true;window.requestAnimationFrame=function(c){if(f){q.push(c);return 0}return o.call(window,c)};window.__thaw=function(){f=false;q.forEach(function(c){o.call(window,c)});q=[]}})()</script>`;
-
-function injectFreeze(html: string): string {
-  const idx = html.indexOf("<head>");
-  if (idx !== -1) return html.slice(0, idx + 6) + FREEZE_SCRIPT + html.slice(idx + 6);
-  const idx2 = html.indexOf("<script");
-  if (idx2 !== -1) return html.slice(0, idx2) + FREEZE_SCRIPT + html.slice(idx2);
-  return FREEZE_SCRIPT + html;
-}
-
-const ONE_SHOT_PATTERNS = [
-  /\bsun\s*set/i, /\bsun\s*rise/i,
-  /\bsun\b.*\b(set|sink|descend|lower|drop|dip|fall)\b/i,
-  /\b(set|sink|descend|lower|drop|dip|fall)\b.*\bsun\b/i,
-  /\b(fade\s*(out|in|away)|dissolve|melt|evaporate|vanish|disappear)\b/i,
-  /\b(grow|sprout|bloom|blossom|wilt|wither|shrink|collapse)\b/i,
-  /\b(build\s*up|fill\s*(in|up)|drain|empty|pour|flood|overflow)\b/i,
-  /\b(morph|transform|evolve|transition|convert|shift)\b.*\b(into|to|from)\b/i,
-  /\b(count\s*down|timer|clock|deplete|exhaust|expire)\b/i,
-  /\b(explode|implode|shatter|crumble|scatter|disperse)\b/i,
-  /\b(emerge|reveal|unveil|unfold|unravel|assemble|construct)\b/i,
-  /\b(rise|ascend|climb|lift)\b.*\b(slowly|gradually|over\s*time)\b/i,
-  /\b(slowly|gradually)\b.*\b(rise|ascend|climb|lift|set|sink|fall|drop)\b/i,
-];
-
-function isOneShot(prompt: string): boolean {
-  return ONE_SHOT_PATTERNS.some((re) => re.test(prompt));
-}
 
 // ── Gallery sidebar (virtual list) ──
 
@@ -1245,138 +1170,59 @@ function GalleryView({
   const handleRecordTimelapse = async () => {
     if (frames.length < 2) return;
 
-    if (frames.length > 100) {
-      const mins = Math.ceil((frames.length * secPerFrame) / 60);
-      if (!window.confirm(
-        `This session has ${frames.length} frames. Export will take ~${mins} minutes and produce a large file. Continue?`
-      )) return;
-    }
-
     abortRef.current = { aborted: false };
     setExporting(true);
 
-    const BATCH = 5;
-    const liveIframes: HTMLIFrameElement[] = [];
-    const destroyIframes = (list: HTMLIFrameElement[]) => {
-      list.forEach((f) => {
-        try { document.body.removeChild(f); } catch { /* ok */ }
-      });
-      list.length = 0;
-    };
-
-    let pendingBatch: Promise<HTMLIFrameElement[]> | null = null;
-
-    // Hoisted so finally can stop the recorder/stream on abort or error
+    const VW = 1920;
+    const VH = 1080;
     let stream: MediaStream | null = null;
     let recorder: MediaRecorder | null = null;
     let done: Promise<void> = Promise.resolve();
+    let currentIframe: HTMLIFrameElement | null = null;
+
+    const removeIframe = (f: HTMLIFrameElement | null) => {
+      if (f) try { document.body.removeChild(f); } catch { /* ok */ }
+    };
 
     try {
-      const freshFlags = frames.map((f, i) => i === 0 || isOneShot(f.promptText));
-      console.log(
-        "[export] classification:",
-        frames.map((_f, i) => `${i + 1}:${freshFlags[i] ? "FRESH" : "CONTINUE"}`).join(", ")
-      );
-      if (abortRef.current.aborted) { setExporting(false); setExportProgress(""); return; }
-
-      const VW = 1920;
-      const VH = 1080;
       const canvas = document.createElement("canvas");
       canvas.width = VW;
       canvas.height = VH;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (ctx) { ctx.fillStyle = "#FBF8EF"; ctx.fillRect(0, 0, VW, VH); }
+
       stream = canvas.captureStream(0);
-      const mimeType = (
+      const mimeType =
         ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
-          .find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm"
-      );
-      recorder = new MediaRecorder(stream, {
-        mimeType,
-        videoBitsPerSecond: 10_000_000,
-      });
+          .find((t) => MediaRecorder.isTypeSupported(t)) ?? "video/webm";
+      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 10_000_000 });
       const chunks: BlobPart[] = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-      done = new Promise<void>((resolve) => {
-        recorder!.onstop = () => resolve();
-      });
+      done = new Promise<void>((resolve) => { recorder!.onstop = () => resolve(); });
       recorder.start();
       const track = stream.getVideoTracks()[0];
-      const durationMs = secPerFrame * 1000;
-      const captureFps = 30;
 
-      const initCtx = canvas.getContext("2d", { willReadFrequently: true });
-      if (initCtx) { initCtx.fillStyle = "#FBF8EF"; initCtx.fillRect(0, 0, VW, VH); }
-
-      const loadBatch = (start: number) => {
-        const end = Math.min(start + BATCH, frames.length);
-        const slice = frames.slice(start, end);
-        const flags = freshFlags.slice(start, end);
-        return Promise.all(
-          slice.map((f, j) => {
-            const html = flags[j] ? injectFreeze(f.html) : f.html;
-            return createOffscreenIframe(html, VW, VH, true);
-          })
-        );
-      };
-
-      // Pre-load first batch
-      setExportProgress(`Loading frames 1–${Math.min(BATCH, frames.length)}...`);
-      let currentBatch = await loadBatch(0);
-      liveIframes.push(...currentBatch);
-
-      for (let batchStart = 0; batchStart < frames.length; batchStart += BATCH) {
+      for (let i = 0; i < frames.length; i++) {
         if (abortRef.current.aborted) break;
 
-        const batchEnd = Math.min(batchStart + BATCH, frames.length);
-        const batchFlags = freshFlags.slice(batchStart, batchEnd);
-        const loaded = currentBatch;
+        setSelectedIdx(i);
+        setExportProgress(`Recording frame ${i + 1} / ${frames.length}...`);
 
-        // Pre-load NEXT batch while we capture this one
-        const nextStart = batchStart + BATCH;
-        if (nextStart < frames.length) {
-          pendingBatch = loadBatch(nextStart);
-        } else {
-          pendingBatch = null;
+        currentIframe = await createOffscreenIframe(frames[i].html, VW, VH, true);
+
+        // Poll up to 1s for first visible paint (5 attempts × 200ms)
+        for (let p = 0; p < 5; p++) {
+          const grabbed = await captureIframeOnce(currentIframe, canvas);
+          if (grabbed && !isCanvasBlank(canvas)) break;
+          if (p === 4) await captureIframeWithHtml2Canvas(currentIframe, canvas);
+          else await new Promise((r) => setTimeout(r, 200));
         }
 
-        for (let j = 0; j < loaded.length; j++) {
-          if (abortRef.current.aborted) break;
-          const globalIdx = batchStart + j;
-          setSelectedIdx(globalIdx);
-          setExportProgress(
-            `Recording frame ${globalIdx + 1} / ${frames.length}...`
-          );
+        (track as unknown as RequestFrameFn).requestFrame?.();
+        await new Promise((r) => setTimeout(r, secPerFrame * 1000));
 
-          const targetIframe = loaded[j];
-
-          if (batchFlags[j]) {
-            console.log(`[export] frame ${globalIdx + 1} — FRESH (frozen, thawing now)`);
-            try {
-              (targetIframe.contentWindow as unknown as { __thaw: () => void }).__thaw();
-            } catch (e) {
-              console.warn("[export] thaw failed, animation may have auto-started", e);
-            }
-            await new Promise((r) => setTimeout(r, 50));
-          } else {
-            console.log(`[export] frame ${globalIdx + 1} — CONTINUE (pre-run)`);
-          }
-
-          await captureFromIframe(
-            targetIframe,
-            canvas,
-            track,
-            durationMs,
-            captureFps,
-            abortRef.current
-          );
-        }
-
-        destroyIframes(liveIframes);
-
-        // Await pre-loaded next batch (should already be ready or nearly ready)
-        if (pendingBatch) {
-          currentBatch = await pendingBatch;
-          liveIframes.push(...currentBatch);
-        }
+        removeIframe(currentIframe);
+        currentIframe = null;
       }
 
       if (!abortRef.current.aborted) {
@@ -1394,13 +1240,9 @@ function GalleryView({
     } catch (err) {
       console.error("Recording failed:", err);
     } finally {
-      // Stop recorder and release stream tracks regardless of abort/error
-      try {
-        if (recorder && recorder.state !== "inactive") { recorder.stop(); await done; }
-      } catch { /* ok */ }
+      try { if (recorder && recorder.state !== "inactive") { recorder.stop(); await done; } } catch { /* ok */ }
       stream?.getTracks().forEach((t: MediaStreamTrack) => t.stop());
-      destroyIframes(liveIframes);
-      pendingBatch?.then((batch) => destroyIframes(batch)).catch(() => {});
+      removeIframe(currentIframe);
       setExporting(false);
       setExportProgress("");
     }
