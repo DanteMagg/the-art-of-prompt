@@ -580,39 +580,53 @@ const LOADING_WORDS = [
   "weaving",
 ];
 
+const SCRAMBLE_CHARS = "abcdefghijklmnopqrstuvwxyz";
+
 function LoadingCanvas() {
   const [wordIdx, setWordIdx] = useState(0);
-  const [visible, setVisible] = useState(true);
+  const [displayed, setDisplayed] = useState(LOADING_WORDS[0]);
 
+  // Scramble animation whenever wordIdx changes
   useEffect(() => {
-    const cycle = setInterval(() => {
-      setVisible(false);
-      setTimeout(() => {
-        setWordIdx((i) => (i + 1) % LOADING_WORDS.length);
-        setVisible(true);
-      }, 300);
-    }, 2000);
-    return () => clearInterval(cycle);
+    const word = LOADING_WORDS[wordIdx];
+    let frame = 0;
+    const totalFrames = 18;
+    const id = setInterval(() => {
+      frame++;
+      if (frame >= totalFrames) {
+        setDisplayed(word);
+        clearInterval(id);
+        return;
+      }
+      const progress = frame / totalFrames;
+      setDisplayed(
+        word
+          .split("")
+          .map((ch, i) =>
+            progress * word.length > i + 0.6
+              ? ch
+              : SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)]
+          )
+          .join("")
+      );
+    }, 30);
+    return () => clearInterval(id);
+  }, [wordIdx]);
+
+  // Cycle words
+  useEffect(() => {
+    const id = setInterval(
+      () => setWordIdx((i) => (i + 1) % LOADING_WORDS.length),
+      2400
+    );
+    return () => clearInterval(id);
   }, []);
 
   return (
     <div className="flex h-full items-center justify-center bg-background">
-      <div className="flex flex-col items-center gap-6">
-        <div className="relative h-12 w-12">
-          <div className="absolute inset-0 rounded-full border-2 border-foreground/10" />
-          <div
-            className="absolute inset-0 rounded-full border-2 border-transparent border-t-foreground/40"
-            style={{ animation: "spin 1s linear infinite" }}
-          />
-        </div>
-        <p
-          className="text-xs text-muted-foreground transition-opacity duration-300"
-          style={{ opacity: visible ? 1 : 0 }}
-        >
-          {LOADING_WORDS[wordIdx]}
-        </p>
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      <p className="font-mono text-4xl font-bold tracking-tight text-foreground/70">
+        {displayed}
+      </p>
     </div>
   );
 }
