@@ -60,11 +60,12 @@ function open(): Promise<IDBDatabase> {
   });
 }
 
-function put<T>(store: IDBObjectStore, value: T): Promise<void> {
+/** Wait for a transaction to fully commit. Call this AFTER firing all synchronous requests. */
+function txDone(t: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
-    const req = store.put(value);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error ?? new Error("IDB transaction aborted"));
   });
 }
 
@@ -80,22 +81,6 @@ function getAll<T>(store: IDBObjectStore, query?: IDBKeyRange): Promise<T[]> {
   return new Promise((resolve, reject) => {
     const req = store.getAll(query);
     req.onsuccess = () => resolve(req.result as T[]);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function del(store: IDBObjectStore, key: IDBValidKey): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const req = store.delete(key);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function delRange(store: IDBObjectStore, range: IDBKeyRange): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const req = store.delete(range);
-    req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
 }
@@ -129,23 +114,21 @@ async function writeSession(
   const metaStore = t.objectStore(META_STORE);
   const framesStore = t.objectStore(FRAMES_STORE);
 
+  // Queue all requests synchronously — crossing an await boundary between requests
+  // causes TransactionInactiveError in Safari (spec-compliant auto-commit).
   const meta: SessionMeta = {
     key: scope,
     title: session.title,
     style: session.style,
     frames: session.frames.map(toMeta),
   };
-  await put(metaStore, meta);
-
-  await delRange(framesStore, scopeRange(scope));
-
+  metaStore.put(meta);
+  framesStore.delete(scopeRange(scope));
   for (const f of session.frames) {
-    await put<FrameRecord>(framesStore, {
-      key: frameKey(scope, f.number),
-      html: f.html,
-    });
+    framesStore.put({ key: frameKey(scope, f.number), html: f.html } satisfies FrameRecord);
   }
 
+  await txDone(t);
   db.close();
 }
 
@@ -155,6 +138,8 @@ async function readSession(scope: string): Promise<SessionData | null> {
   const metaStore = t.objectStore(META_STORE);
   const framesStore = t.objectStore(FRAMES_STORE);
 
+  // For reads we must await each request individually, but reads don't auto-commit
+  // (the transaction stays open as long as there are pending requests — and there always is).
   const meta = await get<SessionMeta>(metaStore, scope);
   if (!meta || !meta.frames?.length) {
     db.close();
@@ -182,9 +167,10 @@ async function deleteSession(scope: string): Promise<void> {
   const metaStore = t.objectStore(META_STORE);
   const framesStore = t.objectStore(FRAMES_STORE);
 
-  await del(metaStore, scope);
-  await delRange(framesStore, scopeRange(scope));
+  metaStore.delete(scope);
+  framesStore.delete(scopeRange(scope));
 
+  await txDone(t);
   db.close();
 }
 
@@ -206,13 +192,10 @@ async function appendFrameToScope(
     style: session.style,
     frames: session.frames.map(toMeta),
   };
-  await put(metaStore, meta);
+  metaStore.put(meta);
+  framesStore.put({ key: frameKey(scope, frame.number), html: frame.html } satisfies FrameRecord);
 
-  await put<FrameRecord>(framesStore, {
-    key: frameKey(scope, frame.number),
-    html: frame.html,
-  });
-
+  await txDone(t);
   db.close();
 }
 
@@ -232,10 +215,10 @@ async function removeLastFrameFromScope(
     style: session.style,
     frames: session.frames.map(toMeta),
   };
-  await put(metaStore, meta);
+  metaStore.put(meta);
+  framesStore.delete(frameKey(scope, removedFrameNumber));
 
-  await del(framesStore, frameKey(scope, removedFrameNumber));
-
+  await txDone(t);
   db.close();
 }
 
@@ -253,8 +236,9 @@ async function updateMetaOnly(
     style: session.style,
     frames: session.frames.map(toMeta),
   };
-  await put(metaStore, meta);
+  metaStore.put(meta);
 
+  await txDone(t);
   db.close();
 }
 

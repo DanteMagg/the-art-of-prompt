@@ -43,31 +43,68 @@ export function sanitizeJSONControlChars(json: string): string {
   return out;
 }
 
+/** Strips a markdown code fence (```json ... ```) wrapping the entire response. */
+export function stripCodeFence(text: string): string {
+  const t = text.trim();
+  if (!t.startsWith("```")) return t;
+  const firstNl = t.indexOf("\n");
+  if (firstNl === -1) return t;
+  const inner = t.slice(firstNl + 1);
+  const lastFence = inner.lastIndexOf("\n```");
+  return lastFence !== -1 ? inner.slice(0, lastFence).trim() : inner.trim();
+}
+
 /** Attempts to parse a Claude JSON response through multiple fallback strategies. */
 export function parseClaudeJSON(jsonStr: string): {
   html: string;
   acknowledgment: string;
   suggestions?: string[];
 } {
-  // Strategy 1: Direct parse
-  try {
-    const parsed = JSON.parse(jsonStr);
-    if (parsed.html && parsed.acknowledgment) return parsed;
-  } catch { /* fall through */ }
+  const stripped = stripCodeFence(jsonStr);
 
-  // Strategy 2: Sanitize control chars
-  try {
-    const parsed = JSON.parse(sanitizeJSONControlChars(jsonStr));
-    if (parsed.html && parsed.acknowledgment) return parsed;
-  } catch { /* fall through */ }
+  // Strategy 1: Direct parse (try both original and stripped)
+  for (const candidate of [jsonStr, stripped]) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed.html && parsed.acknowledgment) return parsed;
+    } catch { /* fall through */ }
+  }
 
-  // Strategy 3: Regex extraction
-  const htmlMatch = jsonStr.match(/"html"\s*:\s*"([\s\S]*?)"\s*,\s*"acknowledgment"/);
-  const ackMatch = jsonStr.match(/"acknowledgment"\s*:\s*"([\s\S]*?)"\s*[,}]/);
-  if (htmlMatch?.[1] && ackMatch?.[1]) {
+  // Strategy 2: Sanitize control chars (try both)
+  for (const candidate of [jsonStr, stripped]) {
+    try {
+      const parsed = JSON.parse(sanitizeJSONControlChars(candidate));
+      if (parsed.html && parsed.acknowledgment) return parsed;
+    } catch { /* fall through */ }
+  }
+
+  // Strategy 3: Field-order-independent regex extraction.
+  // Captures up to the next field boundary — handles any ordering of fields.
+  const unescape = (s: string) =>
+    s.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t")
+     .replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+
+  const extractField = (src: string, name: string): string | null => {
+    const re = new RegExp(`"${name}"\\s*:\\s*"((?:[^"\\\\]|\\\\[\\s\\S])*)"`, "s");
+    const m = src.match(re);
+    return m ? unescape(m[1]) : null;
+  };
+
+  const extractArray = (src: string, name: string): string[] | null => {
+    const re = new RegExp(`"${name}"\\s*:\\s*(\\[[\\s\\S]*?\\])`, "s");
+    const m = src.match(re);
+    if (!m) return null;
+    try { return JSON.parse(m[1]); } catch { return null; }
+  };
+
+  const src = stripped.length < jsonStr.length ? stripped : jsonStr;
+  const htmlVal = extractField(src, "html");
+  const ackVal = extractField(src, "acknowledgment");
+  if (htmlVal && ackVal) {
     return {
-      html: htmlMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\"),
-      acknowledgment: ackMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"'),
+      html: htmlVal,
+      acknowledgment: ackVal,
+      suggestions: extractArray(jsonStr, "suggestions") ?? undefined,
     };
   }
 

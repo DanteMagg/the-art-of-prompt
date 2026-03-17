@@ -280,7 +280,11 @@ async function callClaude(
   });
 
   if (signal) {
-    signal.addEventListener("abort", () => stream.abort(), { once: true });
+    if (signal.aborted) {
+      stream.abort();
+    } else {
+      signal.addEventListener("abort", () => stream.abort(), { once: true });
+    }
   }
 
   const finalMsg = await stream.finalMessage();
@@ -410,11 +414,23 @@ function SessionSetup({
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result as string);
-        if (data?.title && Array.isArray(data.frames) && data.frames.length > 0) {
-          onLoad({ style: "default", ...data });
-        } else {
+        if (!data?.title || !Array.isArray(data.frames)) {
           setImportError("Invalid session file — missing title or frames.");
+          return;
         }
+        const validFrames = (data.frames as unknown[]).filter(
+          (f): f is Frame =>
+            typeof f === "object" && f !== null &&
+            typeof (f as Frame).html === "string" &&
+            typeof (f as Frame).number === "number" &&
+            typeof (f as Frame).promptText === "string" &&
+            typeof (f as Frame).acknowledgment === "string"
+        );
+        if (validFrames.length === 0 && data.frames.length > 0) {
+          setImportError("Session file frames are malformed or missing required fields.");
+          return;
+        }
+        onLoad({ style: "default", ...data, frames: validFrames });
       } catch {
         setImportError("Could not parse file — expected a .json session export.");
       }
@@ -582,8 +598,13 @@ const HEALTH_CHECK_SCRIPT = `<script>
     var hasSvg=document.querySelector('svg');
     var bodyH=document.body?document.body.scrollHeight:0;
     var kids=document.body?document.body.children.length:0;
+    // Also check for fixed/absolute positioned children that don't contribute to scrollHeight
+    var hasFixedContent=document.body&&Array.from(document.body.querySelectorAll('*')).some(function(el){
+      var s=getComputedStyle(el);
+      return (s.position==='fixed'||s.position==='absolute')&&el.getBoundingClientRect().width>0;
+    });
     var visible=bodyH>50&&kids>0;
-    if(hasCanvas||hasSvg||visible){
+    if(hasCanvas||hasSvg||visible||hasFixedContent){
       clearTimeout(t);
       window.parent.postMessage({type:'artifact-health',blank:false},_o);
     }
@@ -643,9 +664,10 @@ function ArtifactViewer({
     blankFired.current = false;
   }, [html]);
 
-  // Crossfade: bump key when html changes to trigger animation
+  // Crossfade: bump key when html changes to trigger animation.
+  // Always bump on loading→false transition so retry with identical HTML still remounts.
   useEffect(() => {
-    if (html && !loading && html !== prevHtmlRef.current) {
+    if (html && !loading) {
       prevHtmlRef.current = html;
       setFadeKey((k) => k + 1);
     }
@@ -1040,7 +1062,15 @@ function GalleryView({
   const abortRef = useRef<{ aborted: boolean }>({ aborted: false });
 
   const frames = session.frames;
-  const current = frames[selectedIdx];
+
+  // Clamp selectedIdx if frames shrink (e.g. undo from active session while gallery is open)
+  useEffect(() => {
+    if (frames.length > 0 && selectedIdx >= frames.length) {
+      setSelectedIdx(frames.length - 1);
+    }
+  }, [frames.length, selectedIdx]);
+
+  const current = frames[Math.min(selectedIdx, Math.max(0, frames.length - 1))];
 
   useEffect(() => {
     if (playing) {
@@ -1069,7 +1099,7 @@ function GalleryView({
     const { default: JSZip } = await import("jszip");
     const zip = new JSZip();
     frames.forEach((f) => {
-      zip.file(`frame-${String(f.number).padStart(3, "0")}.html`, f.html);
+      zip.file(`frame-${String(f.number).padStart(3, "0")}.html`, f.html ?? "");
     });
     const manifest = frames.map((f) => ({
       frame: f.number,
@@ -1599,13 +1629,18 @@ function ActiveSession({
       return;
     }
     retryRef.current += 1;
+    // Create abort controller immediately so handleCancel can abort the upcoming generate call
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     const s = sessionRef.current;
     const removedFrame = s.frames[s.frames.length - 1];
+    if (!removedFrame) return;
     const framesBeforeBad = s.frames.slice(0, -1);
     const prevFrame = framesBeforeBad[framesBeforeBad.length - 1];
     onFrameRemoved({ ...s, frames: framesBeforeBad }, removedFrame.number);
     setTimeout(() => {
+      if (controller.signal.aborted) return;
       generate(
         lastPromptRef.current,
         framesBeforeBad,
@@ -1954,30 +1989,34 @@ export function PromptInterface() {
 
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const warnIdbError = (op: string) => (err: unknown) => {
+    console.error(`[storage] ${op} failed:`, err);
+  };
+
   const handleFrameAdded = (updated: SessionData, frame: Frame) => {
     setSession(updated);
-    appendFrame(updated, frame).catch(() => {});
+    appendFrame(updated, frame).catch(warnIdbError("appendFrame"));
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      appendFrameAutosave(updated, frame).catch(() => {});
+      appendFrameAutosave(updated, frame).catch(warnIdbError("appendFrameAutosave"));
     }, 1000);
   };
 
   const handleFrameRemoved = (updated: SessionData, removedNumber: number) => {
     setSession(updated);
-    removeLastFrame(updated, removedNumber).catch(() => {});
+    removeLastFrame(updated, removedNumber).catch(warnIdbError("removeLastFrame"));
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      removeLastFrameAutosave(updated, removedNumber).catch(() => {});
+      removeLastFrameAutosave(updated, removedNumber).catch(warnIdbError("removeLastFrameAutosave"));
     }, 1000);
   };
 
   const handleMetaChanged = (updated: SessionData) => {
     setSession(updated);
-    saveSessionMeta(updated).catch(() => {});
+    saveSessionMeta(updated).catch(warnIdbError("saveSessionMeta"));
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      saveAutosaveMeta(updated).catch(() => {});
+      saveAutosaveMeta(updated).catch(warnIdbError("saveAutosaveMeta"));
     }, 1000);
   };
 
