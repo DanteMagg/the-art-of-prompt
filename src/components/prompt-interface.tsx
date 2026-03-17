@@ -645,6 +645,55 @@ function LoadingCanvas() {
   );
 }
 
+// ── Generation progress bar ──
+
+function GenerationProgressBar({ loading, streamText }: { loading: boolean; streamText: string }) {
+  const [pct, setPct] = useState(0);
+  const [fading, setFading] = useState(false);
+  const wasLoading = useRef(false);
+
+  // Reset on new generation
+  useEffect(() => {
+    if (loading && !wasLoading.current) {
+      setPct(0);
+      setFading(false);
+    }
+    if (!loading && wasLoading.current) {
+      setPct(100);
+      setFading(false);
+      const t = setTimeout(() => setFading(true), 200);
+      return () => clearTimeout(t);
+    }
+    wasLoading.current = loading;
+  }, [loading]);
+
+  // Drive progress from stream length — typical response ~6 KB
+  useEffect(() => {
+    if (!loading) return;
+    const estimated = 6000;
+    const streamed = Math.min(90, (streamText.length / estimated) * 90);
+    // Seed an initial 8% immediately so bar appears before text arrives
+    setPct((prev) => Math.max(prev, streamed < 5 ? 8 : streamed));
+  }, [streamText, loading]);
+
+  if (!loading && pct === 0) return null;
+
+  return (
+    <div
+      className="absolute top-0 left-0 right-0 h-[2px] z-20 overflow-hidden"
+      style={{ opacity: fading ? 0 : 1, transition: "opacity 400ms ease-out" }}
+    >
+      <div
+        className="h-full bg-foreground/50"
+        style={{
+          width: `${pct}%`,
+          transition: pct === 0 ? "none" : pct === 100 ? "width 180ms ease-out" : "width 700ms ease-out",
+        }}
+      />
+    </div>
+  );
+}
+
 // ── Health check ──
 
 const HEALTH_CHECK_SCRIPT = `<script>
@@ -759,6 +808,7 @@ function ArtifactViewer({
 
   return (
     <div className="relative h-full">
+      <GenerationProgressBar loading={loading} streamText={streamText ?? ""} />
       {!html && !loading ? (
         <IdleCanvas />
       ) : loading ? (
