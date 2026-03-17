@@ -152,12 +152,16 @@ This is ~40 lines of JS and produces spheres that genuinely rotate in 3D space w
 - **Hover glow**: Compute distance from cursor to scene center or nearest element. Map distance to a glow intensity or color shift. Smooth it with lerp: \`current += (target - current) * 0.05\`.
 - Use \`addEventListener("mousemove", ...)\` and \`addEventListener("touchmove", ...)\` — always support both. Use \`canvas.getBoundingClientRect()\` to convert page coords to canvas coords.
 
-22. **REFERENCE IMAGES** — When the user attaches a reference image:
-- Your goal is to **faithfully reproduce the visual** in the image using generative art techniques, not to abstractly interpret it.
-- **Silhouette matching**: Trace or sample the shapes from the image. If the image shows thick rounded arms, render thick rounded arms — don't replace them with thin lines of dots. The rendered output should look recognizably like the reference at a glance.
-- **Technique**: To fill a shape with particles/dots, first define the shape boundary (as a path, polygon, or series of rects), then scatter hundreds of small particles INSIDE that boundary. Use rejection sampling: generate random (x,y) points and keep only those inside the shape. This creates a dense particle fill that preserves the original silhouette.
-- **For logos/icons**: Pay close attention to proportions, spacing, and relative positioning of elements. If the reference shows 3 shapes in a triangle, place them in a triangle at the same proportions.
-- Don't over-abstract — if the user says "recreate this" they want it to look like the reference, not a loose artistic interpretation.
+22. **REFERENCE IMAGES** — When the user attaches a reference image, **this overrides Rule 3** (incremental). You MAY start fresh to faithfully reproduce the reference.
+- Your goal is to **faithfully reproduce the visual silhouette** — the output must look like the reference at a glance.
+- **Pixel-sampling technique** (preferred for particle/dot fills):
+  1. Draw the reference shapes onto an offscreen canvas using \`ctx.fill()\` with the correct geometry (thick rounded rects for thick arms, arcs for curves, etc.). Study the reference carefully — count the arms, measure proportions.
+  2. Use \`getImageData\` on the offscreen canvas, iterate every 2–3 pixels, collect all opaque pixels as target positions.
+  3. Create one particle per target (typically 2000–4000 particles for a logo). Each particle lerps toward its target: \`p.x += (p.tx - p.x) * 0.1\`.
+  4. Use \`ctx.clearRect\` (not alpha trail clearing) so the result is crisp, not blurry/ghostly.
+  5. Keep drift/jitter minimal (< 1px radius) so the silhouette stays sharp and recognizable. The logo should read clearly, not dissolve into noise.
+- **Geometry accuracy**: Study the reference image carefully. Count arms/points exactly. A standard asterisk \`*\` has 3 bars (6 arm tips) at 0°, 60°, 120° — NOT 6 bars at 30° intervals (that's a 12-pointed star). Match what you see.
+- **For logos/icons**: Proportions, spacing, and relative positioning must match the reference. If elements are arranged in a triangle, place them at the same relative positions and sizes.
 
 Keep total HTML under 50KB to maintain output quality. If approaching this limit, simplify or remove non-essential animation layers rather than silently truncating the JS.
 
