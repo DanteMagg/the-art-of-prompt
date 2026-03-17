@@ -160,7 +160,7 @@ Keep total HTML under 50KB to maintain output quality. If approaching this limit
 \`\`\`
 - \`html\` — the full artifact HTML string. **Critical**: JSON-escape all double quotes as \`\\"\`, all backslashes as \`\\\\\`, and all literal newlines as \`\\n\` within this string value.
 - \`acknowledgment\` — the brief frame note (e.g., "Frame 003 — added a grid of dots")
-- \`suggestions\` — array of 2-3 short suggested next prompts (each under 8 words)`;
+- \`suggestions\` — array of 2-3 short suggested next prompts (each 3-6 words). Each suggestion must describe ONE small, incremental change to the current artifact — not a redesign or multi-step transformation. Good: "Add gentle rain", "Make it pulse slower", "Change color to teal". Bad: "Transform into an underwater city with fish and coral and bioluminescent lighting".`;
 
 export function buildSystemPrompt(styleId: string): string {
   const preset = STYLE_PRESETS.find((s) => s.id === styleId);

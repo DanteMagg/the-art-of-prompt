@@ -162,13 +162,13 @@ async function fetchGeneratedSuggestions(
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
       system:
-        "You generate creative short prompt ideas for a generative art / animation tool. Return ONLY a raw JSON array of strings — no markdown, no explanation.",
+        "You generate creative short prompt ideas for a generative art / animation tool. Each idea must be ONE small, incremental change — not a complex multi-part transformation. Return ONLY a raw JSON array of strings — no markdown, no explanation.",
       messages: [
         {
           role: "user",
           content: `${styleCtx}
 
-Generate 30 short, evocative animation/visual prompts that fit this style. Each should be 3–8 words, poetic, specific, and suggest something visually interesting in motion. Vary them across moods, subjects, and scales.
+Generate 30 short, simple animation/visual prompts that fit this style. Each should be 3-6 words and describe a SINGLE incremental change (add one element, shift a color, adjust speed, tweak a shape). NOT multi-step transformations. Think "Add soft rain", "Slow the drift down", "Tint everything amber" — not "Create an underwater city with bioluminescent coral and swimming fish".
 
 Return as a JSON array: ["...", "...", ...]`,
         },
