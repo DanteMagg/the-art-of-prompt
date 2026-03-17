@@ -152,6 +152,13 @@ This is ~40 lines of JS and produces spheres that genuinely rotate in 3D space w
 - **Hover glow**: Compute distance from cursor to scene center or nearest element. Map distance to a glow intensity or color shift. Smooth it with lerp: \`current += (target - current) * 0.05\`.
 - Use \`addEventListener("mousemove", ...)\` and \`addEventListener("touchmove", ...)\` — always support both. Use \`canvas.getBoundingClientRect()\` to convert page coords to canvas coords.
 
+22. **REFERENCE IMAGES** — When the user attaches a reference image:
+- Your goal is to **faithfully reproduce the visual** in the image using generative art techniques, not to abstractly interpret it.
+- **Silhouette matching**: Trace or sample the shapes from the image. If the image shows thick rounded arms, render thick rounded arms — don't replace them with thin lines of dots. The rendered output should look recognizably like the reference at a glance.
+- **Technique**: To fill a shape with particles/dots, first define the shape boundary (as a path, polygon, or series of rects), then scatter hundreds of small particles INSIDE that boundary. Use rejection sampling: generate random (x,y) points and keep only those inside the shape. This creates a dense particle fill that preserves the original silhouette.
+- **For logos/icons**: Pay close attention to proportions, spacing, and relative positioning of elements. If the reference shows 3 shapes in a triangle, place them in a triangle at the same proportions.
+- Don't over-abstract — if the user says "recreate this" they want it to look like the reference, not a loose artistic interpretation.
+
 Keep total HTML under 50KB to maintain output quality. If approaching this limit, simplify or remove non-essential animation layers rather than silently truncating the JS.
 
 **Output ONLY a raw JSON object — no markdown, no code fences, no text before or after:**
