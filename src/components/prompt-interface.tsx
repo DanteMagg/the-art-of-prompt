@@ -1018,71 +1018,52 @@ function isCanvasBlank(canvas: HTMLCanvasElement): boolean {
   return true;
 }
 
-async function captureFromIframe(
-  iframe: HTMLIFrameElement,
-  recCanvas: HTMLCanvasElement,
-  track: MediaStreamTrack,
-  durationMs: number,
-  _captureFps: number,
-  abortSignal?: { aborted: boolean }
-) {
-  const t0 = performance.now();
+type Html2CanvasFn = (el: HTMLElement, opts?: Record<string, unknown>) => Promise<HTMLCanvasElement>;
 
-  // Poll for first visible paint (up to 5 attempts × 200ms)
-  let captured = false;
-  for (let p = 0; p < 5; p++) {
-    if (abortSignal?.aborted) return;
-    try {
-      const grabbed = await captureIframeOnce(iframe, recCanvas);
-      if (grabbed && !isCanvasBlank(recCanvas)) { captured = true; break; }
-    } catch { /* continue polling */ }
-    await new Promise((r) => setTimeout(r, 200));
+// Capture a single HTML frame to a JPEG blob — used in Phase 1 of timelapse export.
+async function captureFrameToBlob(
+  html: string,
+  vw: number,
+  vh: number,
+  html2canvasFn: Html2CanvasFn | null,
+): Promise<Blob | null> {
+  let iframe: HTMLIFrameElement | null = null;
+  try {
+    iframe = await createOffscreenIframe(html, vw, vh, false);
+    const cap = document.createElement("canvas");
+    cap.width = vw;
+    cap.height = vh;
+
+    // Fast poll: up to 6 × 150 ms = 900 ms max
+    let grabbed = false;
+    for (let p = 0; p < 6 && !grabbed; p++) {
+      grabbed = !!(await captureIframeOnce(iframe, cap)) && !isCanvasBlank(cap);
+      if (!grabbed) await new Promise((r) => setTimeout(r, 150));
+    }
+
+    if (grabbed) {
+      // Brief settle then re-capture for a clean, non-flickering frame
+      await new Promise((r) => setTimeout(r, 120));
+      await captureIframeOnce(iframe, cap);
+    } else if (html2canvasFn) {
+      // CSS-only artifact — fall back to html2canvas
+      const doc = iframe.contentDocument;
+      if (doc?.body) {
+        const shot = await html2canvasFn(doc.body, {
+          width: vw, height: vh,
+          backgroundColor: "#FBF8EF",
+          useCORS: true, scale: 1, logging: false,
+        });
+        cap.getContext("2d")?.drawImage(shot, 0, 0, vw, vh);
+      }
+    }
+
+    return new Promise<Blob | null>((res) => cap.toBlob((b) => res(b), "image/jpeg", 0.93));
+  } catch {
+    return null;
+  } finally {
+    if (iframe) { try { document.body.removeChild(iframe); } catch { /* ok */ } }
   }
-
-  if (captured) {
-    // Let the render fully settle, then re-capture for a clean frame
-    await new Promise((r) => setTimeout(r, 400));
-    try { await captureIframeOnce(iframe, recCanvas); } catch { /* keep what we have */ }
-  } else {
-    try { await captureIframeWithHtml2Canvas(iframe, recCanvas); } catch { /* keep last frame */ }
-  }
-
-  // Push frame — captureStream(0) holds it for the duration
-  (track as unknown as RequestFrameFn).requestFrame?.();
-
-  // Subtract capture overhead so total wall-clock per frame stays consistent
-  const elapsed = performance.now() - t0;
-  const remaining = Math.max(0, durationMs - elapsed);
-  await new Promise((r) => setTimeout(r, remaining));
-}
-
-const FREEZE_SCRIPT = `<script>(function(){var o=window.requestAnimationFrame;var q=[];var f=true;window.requestAnimationFrame=function(c){if(f){q.push(c);return 0}return o.call(window,c)};window.__thaw=function(){f=false;q.forEach(function(c){o.call(window,c)});q=[]}})()</script>`;
-
-function injectFreeze(html: string): string {
-  const idx = html.indexOf("<head>");
-  if (idx !== -1) return html.slice(0, idx + 6) + FREEZE_SCRIPT + html.slice(idx + 6);
-  const idx2 = html.indexOf("<script");
-  if (idx2 !== -1) return html.slice(0, idx2) + FREEZE_SCRIPT + html.slice(idx2);
-  return FREEZE_SCRIPT + html;
-}
-
-const ONE_SHOT_PATTERNS = [
-  /\bsun\s*set/i, /\bsun\s*rise/i,
-  /\bsun\b.*\b(set|sink|descend|lower|drop|dip|fall)\b/i,
-  /\b(set|sink|descend|lower|drop|dip|fall)\b.*\bsun\b/i,
-  /\b(fade\s*(out|in|away)|dissolve|melt|evaporate|vanish|disappear)\b/i,
-  /\b(grow|sprout|bloom|blossom|wilt|wither|shrink|collapse)\b/i,
-  /\b(build\s*up|fill\s*(in|up)|drain|empty|pour|flood|overflow)\b/i,
-  /\b(morph|transform|evolve|transition|convert|shift)\b.*\b(into|to|from)\b/i,
-  /\b(count\s*down|timer|clock|deplete|exhaust|expire)\b/i,
-  /\b(explode|implode|shatter|crumble|scatter|disperse)\b/i,
-  /\b(emerge|reveal|unveil|unfold|unravel|assemble|construct)\b/i,
-  /\b(rise|ascend|climb|lift)\b.*\b(slowly|gradually|over\s*time)\b/i,
-  /\b(slowly|gradually)\b.*\b(rise|ascend|climb|lift|set|sink|fall|drop)\b/i,
-];
-
-function isOneShot(prompt: string): boolean {
-  return ONE_SHOT_PATTERNS.some((re) => re.test(prompt));
 }
 
 // ── Gallery sidebar (virtual list) ──
@@ -1239,143 +1220,91 @@ function GalleryView({
     if (frames.length > 100) {
       const mins = Math.ceil((frames.length * secPerFrame) / 60);
       if (!window.confirm(
-        `This session has ${frames.length} frames. Export will take ~${mins} minutes and produce a large file. Continue?`
+        `This session has ${frames.length} frames. Export will take ~${mins} minutes. Continue?`
       )) return;
     }
 
     abortRef.current = { aborted: false };
     setExporting(true);
 
-    const BATCH = 5;
-    const liveIframes: HTMLIFrameElement[] = [];
-    const destroyIframes = (list: HTMLIFrameElement[]) => {
-      list.forEach((f) => {
-        try { document.body.removeChild(f); } catch { /* ok */ }
-      });
-      list.length = 0;
-    };
+    const VW = 1920;
+    const VH = 1080;
+    const durationMs = secPerFrame * 1000;
 
-    let pendingBatch: Promise<HTMLIFrameElement[]> | null = null;
-
-    // Hoisted so finally can stop the recorder/stream on abort or error
     let stream: MediaStream | null = null;
     let recorder: MediaRecorder | null = null;
     let done: Promise<void> = Promise.resolve();
 
     try {
-      const freshFlags = frames.map((f, i) => i === 0 || isOneShot(f.promptText));
-      console.log(
-        "[export] classification:",
-        frames.map((_f, i) => `${i + 1}:${freshFlags[i] ? "FRESH" : "CONTINUE"}`).join(", ")
-      );
-      if (abortRef.current.aborted) { setExporting(false); setExportProgress(""); return; }
+      // Pre-import html2canvas once so it doesn't stall mid-export
+      let html2canvasFn: Html2CanvasFn | null = null;
+      try {
+        html2canvasFn = (await import("html2canvas")).default as unknown as Html2CanvasFn;
+      } catch { /* fallback unavailable */ }
 
-      const VW = 1920;
-      const VH = 1080;
-      const canvas = document.createElement("canvas");
-      canvas.width = VW;
-      canvas.height = VH;
-      stream = canvas.captureStream(0);
-      const mimeType = (
+      // ── Phase 1: capture each frame to a JPEG blob ────────────────────────
+      // Variable-time work happens here; video timing is unaffected.
+      const blobs: (Blob | null)[] = [];
+      for (let i = 0; i < frames.length; i++) {
+        if (abortRef.current.aborted) break;
+        setSelectedIdx(i);
+        setExportProgress(`Capturing ${i + 1} / ${frames.length}…`);
+        blobs.push(await captureFrameToBlob(frames[i].html ?? "", VW, VH, html2canvasFn));
+      }
+
+      if (abortRef.current.aborted) return;
+
+      // ── Phase 2: encode video at exact, uniform timing ────────────────────
+      // No variable-delay work here — every frame gets exactly durationMs.
+      const recCanvas = document.createElement("canvas");
+      recCanvas.width = VW;
+      recCanvas.height = VH;
+      const ctx = recCanvas.getContext("2d")!;
+      ctx.fillStyle = "#FBF8EF";
+      ctx.fillRect(0, 0, VW, VH);
+
+      stream = recCanvas.captureStream(0);
+      const mimeType =
         ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
-          .find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm"
-      );
-      recorder = new MediaRecorder(stream, {
-        mimeType,
-        videoBitsPerSecond: 10_000_000,
-      });
+          .find((t) => MediaRecorder.isTypeSupported(t)) ?? "video/webm";
+      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 10_000_000 });
       const chunks: BlobPart[] = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-      done = new Promise<void>((resolve) => {
-        recorder!.onstop = () => resolve();
-      });
+      done = new Promise<void>((res) => { recorder!.onstop = () => res(); });
       recorder.start();
       const track = stream.getVideoTracks()[0];
-      const durationMs = secPerFrame * 1000;
-      const captureFps = 30;
 
-      const initCtx = canvas.getContext("2d", { willReadFrequently: true });
-      if (initCtx) { initCtx.fillStyle = "#FBF8EF"; initCtx.fillRect(0, 0, VW, VH); }
-
-      const loadBatch = (start: number) => {
-        const end = Math.min(start + BATCH, frames.length);
-        const slice = frames.slice(start, end);
-        const flags = freshFlags.slice(start, end);
-        return Promise.all(
-          slice.map((f, j) => {
-            const html = flags[j] ? injectFreeze(f.html) : f.html;
-            return createOffscreenIframe(html, VW, VH, true);
-          })
-        );
-      };
-
-      // Pre-load first batch
-      setExportProgress(`Loading frames 1–${Math.min(BATCH, frames.length)}...`);
-      let currentBatch = await loadBatch(0);
-      liveIframes.push(...currentBatch);
-
-      for (let batchStart = 0; batchStart < frames.length; batchStart += BATCH) {
+      for (let i = 0; i < blobs.length; i++) {
         if (abortRef.current.aborted) break;
+        setSelectedIdx(i);
+        setExportProgress(`Encoding ${i + 1} / ${blobs.length}…`);
 
-        const batchEnd = Math.min(batchStart + BATCH, frames.length);
-        const batchFlags = freshFlags.slice(batchStart, batchEnd);
-        const loaded = currentBatch;
-
-        // Pre-load NEXT batch while we capture this one
-        const nextStart = batchStart + BATCH;
-        if (nextStart < frames.length) {
-          pendingBatch = loadBatch(nextStart);
-        } else {
-          pendingBatch = null;
-        }
-
-        for (let j = 0; j < loaded.length; j++) {
-          if (abortRef.current.aborted) break;
-          const globalIdx = batchStart + j;
-          setSelectedIdx(globalIdx);
-          setExportProgress(
-            `Recording frame ${globalIdx + 1} / ${frames.length}...`
-          );
-
-          const targetIframe = loaded[j];
-
-          if (batchFlags[j]) {
-            console.log(`[export] frame ${globalIdx + 1} — FRESH (frozen, thawing now)`);
-            try {
-              (targetIframe.contentWindow as unknown as { __thaw: () => void }).__thaw();
-            } catch (e) {
-              console.warn("[export] thaw failed, animation may have auto-started", e);
-            }
-            await new Promise((r) => setTimeout(r, 50));
-          } else {
-            console.log(`[export] frame ${globalIdx + 1} — CONTINUE (pre-run)`);
+        const blob = blobs[i];
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          try {
+            const img = await new Promise<HTMLImageElement>((res, rej) => {
+              const image = new Image();
+              image.onload = () => res(image);
+              image.onerror = rej;
+              image.src = url;
+            });
+            ctx.drawImage(img, 0, 0, VW, VH);
+          } finally {
+            URL.revokeObjectURL(url);
           }
-
-          await captureFromIframe(
-            targetIframe,
-            canvas,
-            track,
-            durationMs,
-            captureFps,
-            abortRef.current
-          );
         }
 
-        destroyIframes(liveIframes);
-
-        // Await pre-loaded next batch (should already be ready or nearly ready)
-        if (pendingBatch) {
-          currentBatch = await pendingBatch;
-          liveIframes.push(...currentBatch);
-        }
+        (track as unknown as RequestFrameFn).requestFrame?.();
+        await new Promise((r) => setTimeout(r, durationMs));
       }
 
       if (!abortRef.current.aborted) {
-        setExportProgress("Finalizing...");
+        setExportProgress("Finalizing…");
         recorder.stop();
         await done;
-        const blob = new Blob(chunks, { type: "video/webm" });
-        const url = URL.createObjectURL(blob);
+        const videoBlob = new Blob(chunks, { type: "video/webm" });
+        const url = URL.createObjectURL(videoBlob);
         const a = document.createElement("a");
         a.href = url;
         a.download = `${session.title.replace(/\s+/g, "-").toLowerCase()}-timelapse.webm`;
@@ -1385,13 +1314,10 @@ function GalleryView({
     } catch (err) {
       console.error("Recording failed:", err);
     } finally {
-      // Stop recorder and release stream tracks regardless of abort/error
       try {
         if (recorder && recorder.state !== "inactive") { recorder.stop(); await done; }
       } catch { /* ok */ }
       stream?.getTracks().forEach((t: MediaStreamTrack) => t.stop());
-      destroyIframes(liveIframes);
-      pendingBatch?.then((batch) => destroyIframes(batch)).catch(() => {});
       setExporting(false);
       setExportProgress("");
     }
