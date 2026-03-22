@@ -300,6 +300,18 @@ export async function saveSessionMeta(session: SessionData): Promise<void> {
   await updateMetaOnly(SESSION_KEY, session);
 }
 
+export async function loadFrameHtml(
+  frameNumber: number,
+  scope: string = SESSION_KEY
+): Promise<string> {
+  const db = await open();
+  const t = db.transaction([FRAMES_STORE], "readonly");
+  const store = t.objectStore(FRAMES_STORE);
+  const record = await get<FrameRecord>(store, frameKey(scope, frameNumber));
+  db.close();
+  return record?.html ?? "";
+}
+
 export async function saveAutosaveMeta(session: SessionData): Promise<void> {
   await updateMetaOnly(AUTOSAVE_KEY, session);
 }

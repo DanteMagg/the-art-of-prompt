@@ -22,6 +22,7 @@ import {
   removeLastFrameAutosave,
   saveSessionMeta,
   saveAutosaveMeta,
+  loadFrameHtml,
   migrateFromLocalStorage,
   migrateFromSessionStorage,
   clearLegacyStorage,
@@ -659,6 +660,7 @@ function GenerationProgressBar({ loading, streamText }: { loading: boolean; stre
       setFading(false);
     }
     if (!loading && wasLoading.current) {
+      wasLoading.current = false;
       setPct(100);
       setFading(false);
       const t = setTimeout(() => setFading(true), 200);
@@ -1155,6 +1157,9 @@ function GalleryView({
   const [secPerFrame, setSecPerFrame] = useState(3);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState("");
+  const [currentHtml, setCurrentHtml] = useState<string>(
+    () => session.frames[session.frames.length - 1]?.html ?? ""
+  );
   const playRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<{ aborted: boolean }>({ aborted: false });
 
@@ -1168,6 +1173,18 @@ function GalleryView({
   }, [frames.length, selectedIdx]);
 
   const current = frames[Math.min(selectedIdx, Math.max(0, frames.length - 1))];
+
+  // Lazy-load HTML for gallery display — older frames have HTML stripped from
+  // React state to save memory, so we fetch from IDB when needed.
+  useEffect(() => {
+    if (!current) { setCurrentHtml(""); return; }
+    if (current.html) {
+      setCurrentHtml(current.html);
+    } else {
+      setCurrentHtml("");
+      loadFrameHtml(current.number).then(setCurrentHtml);
+    }
+  }, [current?.number, current?.html]);
 
   useEffect(() => {
     if (playing) {
@@ -1194,11 +1211,14 @@ function GalleryView({
 
   const handleDownloadZip = async () => {
     const { default: JSZip } = await import("jszip");
+    // Load full session from IDB — in-state HTML may be stripped for memory
+    const fullSession = await loadSession();
+    const allFrames = fullSession?.frames ?? frames;
     const zip = new JSZip();
-    frames.forEach((f) => {
+    allFrames.forEach((f) => {
       zip.file(`frame-${String(f.number).padStart(3, "0")}.html`, f.html ?? "");
     });
-    const manifest = frames.map((f) => ({
+    const manifest = allFrames.map((f) => ({
       frame: f.number,
       prompt: f.promptText,
       acknowledgment: f.acknowledgment,
@@ -1236,6 +1256,10 @@ function GalleryView({
     let done: Promise<void> = Promise.resolve();
 
     try {
+      // Load full session from IDB — in-state HTML may be stripped for memory
+      const fullSession = await loadSession();
+      const allFrames = fullSession?.frames ?? frames;
+
       // Pre-import html2canvas once so it doesn't stall mid-export
       let html2canvasFn: Html2CanvasFn | null = null;
       try {
@@ -1245,11 +1269,11 @@ function GalleryView({
       // ── Phase 1: capture each frame to a JPEG blob ────────────────────────
       // Variable-time work happens here; video timing is unaffected.
       const blobs: (Blob | null)[] = [];
-      for (let i = 0; i < frames.length; i++) {
+      for (let i = 0; i < allFrames.length; i++) {
         if (abortRef.current.aborted) break;
         setSelectedIdx(i);
-        setExportProgress(`Capturing ${i + 1} / ${frames.length}…`);
-        blobs.push(await captureFrameToBlob(frames[i].html ?? "", VW, VH, html2canvasFn));
+        setExportProgress(`Capturing ${i + 1} / ${allFrames.length}…`);
+        blobs.push(await captureFrameToBlob(allFrames[i].html ?? "", VW, VH, html2canvasFn));
       }
 
       if (abortRef.current.aborted) return;
@@ -1387,7 +1411,7 @@ function GalleryView({
             ) : current ? (
               <iframe
                 key={current.number}
-                srcDoc={current.html}
+                srcDoc={currentHtml}
                 className="absolute inset-0 h-full w-full border-0"
                 sandbox="allow-scripts"
                 title={`Frame ${current.number}`}
@@ -2129,9 +2153,36 @@ export function PromptInterface() {
     console.error(`[storage] ${op} failed:`, err);
   };
 
+  const CHECKPOINT_INTERVAL = 200;
+
   const handleFrameAdded = (updated: SessionData, frame: Frame) => {
-    setSession(updated);
+    // Keep only the last frame's HTML in React state — older frames' HTML
+    // is persisted in IDB and loaded on demand, limiting memory growth.
+    const leanSession: SessionData = {
+      ...updated,
+      frames: updated.frames.map((f, i, arr) =>
+        i < arr.length - 1 ? { ...f, html: "" } : f
+      ),
+    };
+    setSession(leanSession);
     appendFrame(updated, frame).catch(warnIdbError("appendFrame"));
+
+    // Auto-checkpoint: download a full JSON backup every N frames
+    if (frame.number % CHECKPOINT_INTERVAL === 0) {
+      const data = JSON.stringify(
+        { ...updated, exportedAt: new Date().toISOString() },
+        null,
+        2
+      );
+      const blob = new Blob([data], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${updated.title.replace(/\s+/g, "-").toLowerCase()}-checkpoint-${frame.number}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    }
+
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
       appendFrameAutosave(updated, frame).catch(warnIdbError("appendFrameAutosave"));
@@ -2140,6 +2191,22 @@ export function PromptInterface() {
 
   const handleFrameRemoved = (updated: SessionData, removedNumber: number) => {
     setSession(updated);
+    // The new last frame may have had its HTML stripped from state — restore it
+    // from IDB so the next generation has the correct context HTML.
+    const newLast = updated.frames[updated.frames.length - 1];
+    if (newLast && !newLast.html) {
+      loadFrameHtml(newLast.number).then((html) => {
+        setSession((s) => {
+          if (!s || s.frames[s.frames.length - 1]?.number !== newLast.number) return s;
+          return {
+            ...s,
+            frames: s.frames.map((f, i, arr) =>
+              i === arr.length - 1 ? { ...f, html } : f
+            ),
+          };
+        });
+      });
+    }
     removeLastFrame(updated, removedNumber).catch(warnIdbError("removeLastFrame"));
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
