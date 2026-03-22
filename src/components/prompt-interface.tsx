@@ -2169,18 +2169,21 @@ export function PromptInterface() {
 
     // Auto-checkpoint: download a full JSON backup every N frames
     if (frame.number % CHECKPOINT_INTERVAL === 0) {
-      const data = JSON.stringify(
-        { ...updated, exportedAt: new Date().toISOString() },
-        null,
-        2
-      );
-      const blob = new Blob([data], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${updated.title.replace(/\s+/g, "-").toLowerCase()}-checkpoint-${frame.number}.json`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      loadSession().then((full) => {
+        const src = full ?? updated;
+        const data = JSON.stringify(
+          { ...src, exportedAt: new Date().toISOString() },
+          null,
+          2
+        );
+        const blob = new Blob([data], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${src.title.replace(/\s+/g, "-").toLowerCase()}-checkpoint-${frame.number}.json`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      });
     }
 
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
@@ -2229,10 +2232,11 @@ export function PromptInterface() {
     setSession(null);
   };
 
-  const handleSaveSession = () => {
+  const handleSaveSession = async () => {
     if (!session) return;
+    const fullSession = await loadSession() ?? session;
     const data = JSON.stringify(
-      { ...session, exportedAt: new Date().toISOString() },
+      { ...fullSession, exportedAt: new Date().toISOString() },
       null,
       2
     );
@@ -2240,7 +2244,7 @@ export function PromptInterface() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${session.title.replace(/\s+/g, "-").toLowerCase()}-session.json`;
+    a.download = `${fullSession.title.replace(/\s+/g, "-").toLowerCase()}-session.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
