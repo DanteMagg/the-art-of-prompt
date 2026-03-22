@@ -1770,13 +1770,11 @@ function ActiveSession({
               </p>
             </div>
             <p
-              className={`text-xs tabular-nums text-muted-foreground ${
+              className={`text-lg font-light tabular-nums tracking-tight text-foreground ${
                 ack ? "animate-flash" : ""
               }`}
             >
-              {session.frames.length === 0
-                ? "No prompts yet"
-                : `${session.frames.length} prompt${session.frames.length === 1 ? "" : "s"} so far`}
+              {String(lastFrame?.number ?? 0).padStart(3, "0")}
             </p>
           </div>
 
