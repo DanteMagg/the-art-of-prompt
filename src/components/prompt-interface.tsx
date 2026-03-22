@@ -1760,292 +1760,315 @@ function ActiveSession({
     <div className="flex h-screen w-screen overflow-hidden">
       {/* Left Panel */}
       {!fullscreen && (
-        <div className="flex w-[30%] min-w-[300px] flex-col border-r p-6">
-          <div className="mb-8">
-            <ClaudeLogo className="mb-2 h-5 w-5 text-foreground" />
-            <p className="text-[11px] tracking-wide text-muted-foreground uppercase">
-              The Art of Prompt
-            </p>
-          </div>
-
-          <div className="mb-4">
-            <p className="text-xs text-muted-foreground">{session.title}</p>
+        <div className="flex w-[30%] min-w-[300px] flex-col border-r">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <div className="flex items-center gap-3">
+              <ClaudeLogo className="h-5 w-5 text-foreground" />
+              <p className="text-[11px] tracking-wide text-muted-foreground uppercase">
+                {session.title}
+              </p>
+            </div>
             <p
-              className={`mt-1 text-lg font-light tracking-tight text-foreground ${
+              className={`text-xs tabular-nums text-muted-foreground ${
                 ack ? "animate-flash" : ""
               }`}
             >
-              {String(lastFrame?.number ?? 0).padStart(3, "0")}
+              {session.frames.length === 0
+                ? "No prompts yet"
+                : `${session.frames.length} prompt${session.frames.length === 1 ? "" : "s"} so far`}
             </p>
           </div>
 
-          <div className="mb-3 flex flex-wrap gap-1">
-            {MODELS.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => handleModelChange(m.id)}
-                disabled={loading}
-                className={`rounded px-2 py-1 text-[11px] transition-colors ${
-                  model === m.id
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                title={m.desc}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="mb-6 flex flex-wrap gap-1">
-            {STYLE_PRESETS.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => handleStyleChange(s.id as StyleId)}
-                disabled={loading}
-                className={`rounded px-2 py-1 text-[11px] transition-colors ${
-                  session.style === s.id
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-
-          <div aria-live="polite">
-            {error && (
-              <div className="mb-4 border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-                <div className="flex items-start justify-between gap-2">
-                  <span>{error}</span>
-                  <button
-                    onClick={() => setError(null)}
-                    className="shrink-0 text-red-400 hover:text-red-600"
-                  >
-                    ✕
-                  </button>
-                </div>
-                {error.toLowerCase().includes("api key") && (
-                  <button
-                    onClick={onChangeKey}
-                    className="mt-2 text-[11px] text-red-500 underline hover:text-red-700"
-                  >
-                    Change API key
-                  </button>
-                )}
-              </div>
-            )}
-
-            {blankWarning && !error && (
-              <div className="mb-4 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                <div className="flex items-start justify-between gap-2">
-                  <span>This artifact may not have rendered correctly.</span>
-                  <button
-                    onClick={() => setBlankWarning(false)}
-                    className="shrink-0 text-amber-400 hover:text-amber-600"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <button
-                  onClick={() => {
-                    const removed = session.frames[session.frames.length - 1];
-                    onFrameRemoved({
-                      ...session,
-                      frames: session.frames.slice(0, -1),
-                    }, removed?.number ?? 0);
-                    setBlankWarning(false);
-                    setAck(null);
-                  }}
-                  className="mt-2 text-[11px] text-amber-600 underline hover:text-amber-800"
-                >
-                  Undo last frame
-                </button>
-              </div>
-            )}
-
-            {ack && !error && !blankWarning && (
-              <div className="mb-2 text-xs text-muted-foreground">{ack}</div>
-            )}
-          </div>
-
-          {/* Suggestions */}
-          {suggestions.length > 0 && !loading && !error && (
-            <div className="mb-4 flex flex-wrap items-center gap-1">
-              {suggestions.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setPrompt(s)}
-                  className="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-colors"
-                >
-                  {s}
-                </button>
-              ))}
-              {suggestionPoolRef.current.length > 3 && (
-                <button
-                  onClick={() => setSuggestions(pickRandom(suggestionPoolRef.current, 3))}
-                  className="rounded px-1.5 py-1 text-[11px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-                  title="Show different suggestions"
-                >
-                  ↻
-                </button>
-              )}
+          {/* Main content area */}
+          <div className="flex flex-1 flex-col overflow-y-auto px-6 py-6">
+            {/* Instruction headline */}
+            <div className="mb-6">
+              <h2 className="text-base font-medium text-foreground leading-snug">
+                Describe what you want to see
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                Your words shape the art. Each prompt builds on the last.
+              </p>
             </div>
-          )}
 
-          <div className="mt-auto space-y-3">
-            {userImages.length > 0 && (
-              <div className="flex gap-2 flex-wrap">
-                {userImages.map((img, i) => (
-                  <div key={i} className="relative group">
-                    <img
-                      src={`data:${img.mediaType};base64,${img.base64}`}
-                      alt={`Upload ${i + 1}`}
-                      className="h-14 w-14 rounded border border-border object-cover"
-                    />
+            {/* Errors / warnings */}
+            <div aria-live="polite">
+              {error && (
+                <div className="mb-4 border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                  <div className="flex items-start justify-between gap-2">
+                    <span>{error}</span>
                     <button
-                      onClick={() => setUserImages((prev) => prev.filter((_, j) => j !== i))}
-                      className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-foreground text-background text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => setError(null)}
+                      className="shrink-0 text-red-400 hover:text-red-600"
                     >
-                      ×
+                      ✕
                     </button>
                   </div>
-                ))}
+                  {error.toLowerCase().includes("api key") && (
+                    <button
+                      onClick={onChangeKey}
+                      className="mt-2 text-[11px] text-red-500 underline hover:text-red-700"
+                    >
+                      Change API key
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {blankWarning && !error && (
+                <div className="mb-4 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  <div className="flex items-start justify-between gap-2">
+                    <span>This artifact may not have rendered correctly.</span>
+                    <button
+                      onClick={() => setBlankWarning(false)}
+                      className="shrink-0 text-amber-400 hover:text-amber-600"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const removed = session.frames[session.frames.length - 1];
+                      onFrameRemoved({
+                        ...session,
+                        frames: session.frames.slice(0, -1),
+                      }, removed?.number ?? 0);
+                      setBlankWarning(false);
+                      setAck(null);
+                    }}
+                    className="mt-2 text-[11px] text-amber-600 underline hover:text-amber-800"
+                  >
+                    Undo last frame
+                  </button>
+                </div>
+              )}
+
+              {ack && !error && !blankWarning && (
+                <div className="mb-2 text-xs text-muted-foreground">{ack}</div>
+              )}
+            </div>
+
+            {/* Suggestions — above the prompt as easy on-ramp */}
+            {suggestions.length > 0 && !loading && !error && (
+              <div className="mb-4">
+                <p className="mb-2 text-[11px] text-muted-foreground/70">Try one of these, or type your own:</p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {suggestions.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setPrompt(s)}
+                      className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-colors"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                  {suggestionPoolRef.current.length > 3 && (
+                    <button
+                      onClick={() => setSuggestions(pickRandom(suggestionPoolRef.current, 3))}
+                      className="rounded-full px-2 py-1 text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                      title="Show different suggestions"
+                    >
+                      ↻
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
-            <div className="relative">
-              <Textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe one change..."
-                disabled={loading}
-                className="min-h-[100px] resize-none text-sm placeholder:text-muted-foreground pr-10"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSubmit();
-                  }
-                }}
-                onPaste={(e) => {
-                  const items = e.clipboardData?.items;
-                  if (!items) return;
-                  for (let i = 0; i < items.length; i++) {
-                    if (items[i].type.startsWith("image/")) {
-                      e.preventDefault();
-                      const file = items[i].getAsFile();
-                      if (file) addImageFromFile(file);
-                      return;
-                    }
-                  }
-                }}
-              />
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  const files = e.target.files;
-                  if (files) Array.from(files).forEach(addImageFromFile);
-                  e.target.value = "";
-                }}
-              />
-              <button
-                type="button"
-                disabled={loading || userImages.length >= 4}
-                onClick={() => fileInputRef.current?.click()}
-                className="absolute right-2 bottom-2 rounded p-1 text-muted-foreground/50 hover:text-muted-foreground transition-colors disabled:opacity-30"
-                title="Attach image"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                  <circle cx="9" cy="9" r="2" />
-                  <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Quick actions */}
-            <div className="flex flex-wrap gap-1">
-              {QUICK_ACTIONS.map((qa) => (
-                <button
-                  key={qa}
-                  disabled={loading}
-                  onClick={() =>
-                    setPrompt((p) => {
-                      if (p.toLowerCase().includes(qa.toLowerCase())) return p;
-                      return p.trim() ? `${p.trim()}, ${qa.toLowerCase()}` : qa;
-                    })
-                  }
-                  className="rounded border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-colors disabled:opacity-40"
-                >
-                  {qa}
-                </button>
-              ))}
-            </div>
-
-            {loading ? (
-              <Button onClick={handleCancel} variant="outline" className="w-full">
-                Cancel
-              </Button>
-            ) : (
-              <Button
-                onClick={handleSubmit}
-                disabled={!prompt.trim()}
-                className="w-full"
-              >
-                <span className="flex items-center justify-center gap-2">
-                  Submit
-                  <kbd className="rounded bg-primary-foreground/20 px-1 py-0.5 text-[10px] font-normal">
-                    ↵
-                  </kbd>
-                </span>
-              </Button>
-            )}
-
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={() => setShowGallery(true)}
-                className="mr-auto text-xs text-muted-foreground hover:text-foreground"
-              >
-                Gallery ({session.frames.length})
-              </button>
-              <button
-                onClick={onSave}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                Save
-              </button>
-              {session.frames.length > 0 && (
-                <button
-                  onClick={() => {
-                    const removed = session.frames[session.frames.length - 1];
-                    onFrameRemoved({
-                      ...session,
-                      frames: session.frames.slice(0, -1),
-                    }, removed?.number ?? 0);
-                    setAck(null);
-                    setError(null);
-                  }}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Undo
-                </button>
+            {/* Prompt input */}
+            <div className="space-y-3">
+              {userImages.length > 0 && (
+                <div className="flex gap-2 flex-wrap">
+                  {userImages.map((img, i) => (
+                    <div key={i} className="relative group">
+                      <img
+                        src={`data:${img.mediaType};base64,${img.base64}`}
+                        alt={`Upload ${i + 1}`}
+                        className="h-14 w-14 rounded border border-border object-cover"
+                      />
+                      <button
+                        onClick={() => setUserImages((prev) => prev.filter((_, j) => j !== i))}
+                        className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-foreground text-background text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
+
+              <div className="relative">
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="What should happen next? (e.g. 'add falling rain', 'make it glow')"
+                  disabled={loading}
+                  className="min-h-[100px] resize-none text-sm placeholder:text-muted-foreground/60 pr-10"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSubmit();
+                    }
+                  }}
+                  onPaste={(e) => {
+                    const items = e.clipboardData?.items;
+                    if (!items) return;
+                    for (let i = 0; i < items.length; i++) {
+                      if (items[i].type.startsWith("image/")) {
+                        e.preventDefault();
+                        const file = items[i].getAsFile();
+                        if (file) addImageFromFile(file);
+                        return;
+                      }
+                    }
+                  }}
+                />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = e.target.files;
+                    if (files) Array.from(files).forEach(addImageFromFile);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={loading || userImages.length >= 4}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="absolute right-2 bottom-2 rounded p-1 text-muted-foreground/50 hover:text-muted-foreground transition-colors disabled:opacity-30"
+                  title="Attach image"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                    <circle cx="9" cy="9" r="2" />
+                    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Quick actions */}
+              <div className="flex flex-wrap gap-1">
+                {QUICK_ACTIONS.map((qa) => (
+                  <button
+                    key={qa}
+                    disabled={loading}
+                    onClick={() =>
+                      setPrompt((p) => {
+                        if (p.toLowerCase().includes(qa.toLowerCase())) return p;
+                        return p.trim() ? `${p.trim()}, ${qa.toLowerCase()}` : qa;
+                      })
+                    }
+                    className="rounded border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-colors disabled:opacity-40"
+                  >
+                    {qa}
+                  </button>
+                ))}
+              </div>
+
+              {loading ? (
+                <Button onClick={handleCancel} variant="outline" className="w-full">
+                  Cancel
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleSubmit}
+                  disabled={!prompt.trim()}
+                  className="w-full"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    Submit
+                    <kbd className="rounded bg-primary-foreground/20 px-1 py-0.5 text-[10px] font-normal">
+                      ↵
+                    </kbd>
+                  </span>
+                </Button>
+              )}
+            </div>
+
+            {/* Settings — de-emphasized below the primary action */}
+            <div className="mt-8 space-y-3 border-t pt-4">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50">Settings</p>
+              <div className="flex flex-wrap gap-1">
+                {MODELS.map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => handleModelChange(m.id)}
+                    disabled={loading}
+                    className={`rounded px-2 py-1 text-[11px] transition-colors ${
+                      model === m.id
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    title={m.desc}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {STYLE_PRESETS.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => handleStyleChange(s.id as StyleId)}
+                    disabled={loading}
+                    className={`rounded px-2 py-1 text-[11px] transition-colors ${
+                      session.style === s.id
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Footer actions */}
+          <div className="flex gap-2 border-t px-6 py-3">
+            <button
+              onClick={() => setShowGallery(true)}
+              className="mr-auto text-xs text-muted-foreground hover:text-foreground"
+            >
+              Gallery ({session.frames.length})
+            </button>
+            <button
+              onClick={onSave}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Save
+            </button>
+            {session.frames.length > 0 && (
               <button
                 onClick={() => {
-                  if (session.frames.length === 0 || window.confirm("Start a new session? Unsaved progress will be lost.")) {
-                    onEnd();
-                  }
+                  const removed = session.frames[session.frames.length - 1];
+                  onFrameRemoved({
+                    ...session,
+                    frames: session.frames.slice(0, -1),
+                  }, removed?.number ?? 0);
+                  setAck(null);
+                  setError(null);
                 }}
                 className="text-xs text-muted-foreground hover:text-foreground"
               >
-                New Session
+                Undo
               </button>
-            </div>
+            )}
+            <button
+              onClick={() => {
+                if (session.frames.length === 0 || window.confirm("Start a new session? Unsaved progress will be lost.")) {
+                  onEnd();
+                }
+              }}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              New Session
+            </button>
           </div>
         </div>
       )}
